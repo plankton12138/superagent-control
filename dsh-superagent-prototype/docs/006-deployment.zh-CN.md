@@ -70,6 +70,22 @@
 
    两个配置共享应用密钥的钥匙串条目。若只想移除机器人配置，请删除其目录；不要运行 `lark-cli config remove`，因为那会影响共享的密钥。
 
+### QQ 机器人（可选）
+
+1. 在 QQ 开放平台完成主体认证并创建机器人，取得 AppID 和 AppSecret。正式群需要机器人上线审核；未上线时只能使用沙箱环境，沙箱只接收测试群事件。
+2. 把 AppSecret 放进 DSH 进程可见的环境变量，默认变量名是 `QQ_BOT_CLIENT_SECRET`：
+
+   ```sh
+   export QQ_BOT_CLIENT_SECRET=<app-secret>
+   ```
+
+   AppSecret 不写入设置或数据库。启动或重启 DSH 前必须设置该变量。
+3. 在 profile 配置中启用 `dsh-superagent-qq` 条目。
+4. 在面板「来源 → QQ」填写 AppID、AppSecret 变量名、是否使用沙箱、接收的群和是否接收单聊。QQ 官方只推送群内 @ 机器人的消息；群主开启「机器人接收群内全部消息」后，才会收到 `GROUP_MESSAGE_CREATE`。
+5. 在策略页添加允许发起工作的成员标识：群成员填写 `<群 openid>:<成员 openid>`，单聊用户填写 `c2c:<用户 openid>`。`member_openid` 只在所属群有效。
+
+QQ 的被动回复窗口比飞书短：群聊为 5 分钟、每条消息最多 5 次，单聊为 60 分钟、最多 4 次。超窗后回复会失败，结果仍保留在面板。首版不主动推送，也不读取群历史。
+
 ## 安装
 
 在尚无 `superagent` 配置档的机器上，执行以下代码块一次：
@@ -90,7 +106,7 @@ dsh plugin --profile superagent add "link:$PWD"
 
 ## 机器配置
 
-将 [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) 复制到 `~/.dsh/profiles/superagent/cordis.patch.yml`（替换该文件），并替换其中每个 `<placeholder>`。使用飞书时，还需在该文件中启用 `dsh-superagent-feishu` 条目。`webserver` 条目设置面板端口。
+将 [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) 复制到 `~/.dsh/profiles/superagent/cordis.patch.yml`（替换该文件），并替换其中每个 `<placeholder>`。使用飞书时，还需在该文件中启用 `dsh-superagent-feishu` 条目；使用 QQ 时启用 `dsh-superagent-qq`。`webserver` 条目设置面板端口。
 
 | 键 | 是否必需 | 含义 |
 | --- | --- | --- |

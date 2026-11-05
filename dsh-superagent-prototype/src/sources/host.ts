@@ -13,6 +13,8 @@ export const HEALTH_TEXT = {
   sourceOff: 'Off',
   feishuCliUnset: 'The Source is on, and its bot lark-cli is not set',
   feishuBotMissing: 'Waiting for the Feishu bot',
+  qqAppUnset: 'The Source is on, and its AppID is not set',
+  qqSecretUnset: 'The Source is on, and {variable} is not set',
   pollFailures: '{count} consecutive failed polls; last: {error}',
 } as const
 export type HealthCode = keyof typeof HEALTH_TEXT

@@ -68,6 +68,22 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 
    Both configurations share the keychain entry for the app secret. To remove only the bot configuration, delete its directory; do not run `lark-cli config remove`, which would affect the shared secret.
 
+### QQ bot (optional)
+
+1. Complete subject verification on the QQ Open Platform and create a bot; record its AppID and AppSecret. A production group requires the bot's release review; before that, only the sandbox environment works and it receives events from test groups only.
+2. Put the AppSecret in an environment variable the DSH process can read; the default name is `QQ_BOT_CLIENT_SECRET`:
+
+   ```sh
+   export QQ_BOT_CLIENT_SECRET=<app-secret>
+   ```
+
+   The AppSecret is never written to settings or the database. Set it before starting or restarting DSH.
+3. Enable the `dsh-superagent-qq` entry in the profile configuration.
+4. In the panel's Source → QQ card, set the AppID, the AppSecret variable name, whether to use the sandbox, the groups to receive, and whether to receive single chats. QQ pushes group messages only when they mention the bot; after a group owner enables full message reception, `GROUP_MESSAGE_CREATE` also arrives.
+5. In the Policy, add the member ids that may originate work: for a group member, `<group openid>:<member openid>`; for a single chat, `c2c:<user openid>`. A `member_openid` is valid only in its own group.
+
+QQ's passive reply window is shorter than Feishu's: five minutes and at most five replies per message in a group, sixty minutes and at most four replies in a single chat. A reply after the window fails, and the result stays in the panel. The first version sends no active messages and reads no group history.
+
 ## Install
 
 Run this block once, on a machine that has no `superagent` profile yet:
@@ -88,7 +104,7 @@ Run the profile-creation command only for a new installation. If the profile alr
 
 ## Machine configuration
 
-Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there. The `webserver` entry sets the panel's port.
+Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) to `~/.dsh/profiles/superagent/cordis.patch.yml`, replacing that file, and replace every `<placeholder>`. For Feishu, also enable the `dsh-superagent-feishu` entry there; for QQ, enable `dsh-superagent-qq`. The `webserver` entry sets the panel's port.
 
 | Key | Required | Meaning |
 | --- | --- | --- |

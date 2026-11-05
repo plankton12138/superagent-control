@@ -23,6 +23,7 @@
 node -v; pnpm -v; git --version; tmux -V; python3 --version; gh --version | head -1; dsh --version
 gh api user --jq .login
 command -v lark-cli
+[ -n "$QQ_BOT_CLIENT_SECRET" ] && echo 'QQ AppSecret 已设置' || echo 'QQ AppSecret 未设置'
 grep -l -E 'id: dsh-superagent\b' "${DSH_HOME:-$HOME/.dsh}"/profiles/*/cordis.patch.yml 2>/dev/null
 ```
 
@@ -36,15 +37,15 @@ grep -l -E 'id: dsh-superagent\b' "${DSH_HOME:-$HOME/.dsh}"/profiles/*/cordis.pa
 
 **来源：请求来自何处。**
 
-1. **来源。** 智能体应只从 GitHub 接收请求，还是也从飞书聊天接收？[仅 GitHub，除非团队在飞书工作。]
+1. **来源。** 智能体应只从 GitHub 接收请求，还是也从飞书聊天、QQ 群和单聊接收，或同时使用多个来源？[仅 GitHub，除非团队在飞书或 QQ 工作。]
 2. **仓库。** 智能体应在哪个 github.com 仓库上工作，格式为 `owner/name`？
 3. **智能体账户。** 智能体将以哪个 GitHub 用户账户身份行动？[专用账户，绝不用操作者自己的账户：智能体写下的所有内容都会以该名称出现。] 该账户可能尚不存在；创建它属于操作者步骤。
-4. 使用飞书时：按名称指定**哪些聊天？** 机器人配置完成后，智能体会查找它们的 id。
+4. 使用飞书时：按名称指定**哪些聊天？** 机器人配置完成后，智能体会查找它们的 id。使用 QQ 时：按名称指定**哪些群？** 群和成员的 openid 会从面板里的第一条 Trigger 中取得。
 
 **策略：谁可以请求工作。**
 
 5. **在 GitHub 上。** 哪些 GitHub 登录名可以向智能体请求工作？[仅 `<operator login>`：智能体只为该列表上的人行动，短名单可让团队的干扰保持较低，同时让操作者了解智能体的行为方式。]
-6. 使用飞书时：**谁可以在飞书中请求工作？** [第一个聊天中的所有成员，并与其成员保持同步。]
+6. 使用飞书时：**谁可以在飞书中请求工作？** [第一个聊天中的所有成员，并与其成员保持同步。] 使用 QQ 时：**哪些群成员和单聊用户可以请求工作？** 他们的 `<群 openid>:<成员 openid>` 或 `c2c:<用户 openid>` 会出现在第一条 Trigger 上，因此策略可以先留空，等机器人收到消息后再补上。
 
 **执行：智能体如何处理工单。**
 
@@ -58,7 +59,8 @@ grep -l -E 'id: dsh-superagent\b' "${DSH_HOME:-$HOME/.dsh}"/profiles/*/cordis.pa
 - 从操作者自己的配置档发起每小时检查，在 dsh-superagent 未运行时对其进行修复；
 - 分支前缀 `agent/`；
 - 接单模式（accept mode）`observe`，它记录主动工作但不执行；以及默认规则和提示词段落；
-- 使用飞书时：机器人只读取提及消息，且私聊消息开启。
+- 使用飞书时：机器人只读取提及消息，且私聊消息开启；
+- 使用 QQ 时：机器人只读取提及消息，私聊消息开启，且机器人通过上线审核前保持沙箱模式。
 
 ## 3. 计划
 
@@ -66,9 +68,9 @@ grep -l -E 'id: dsh-superagent\b' "${DSH_HOME:-$HOME/.dsh}"/profiles/*/cordis.pa
 
 ## 4. 执行
 
-1. **先执行操作者步骤。** 阅读 `docs/006-deployment.md` 的账户一节，自行编写 CLI 包装脚本，然后发送一条消息说明只有操作者才能做的事情：创建智能体账户；若启用自动合并，以启用它的账户登录一个 CLI；以智能体账户接受仓库邀请；为每个包装脚本运行 `auth login`；使用飞书时，创建并发布机器人应用，并用其密钥运行 `config init` 命令。等到操作者确认完成，然后用 `<wrapper> api user --jq .login` 检查每个登录。
+1. **先执行操作者步骤。** 阅读 `docs/006-deployment.md` 的账户一节，自行编写 CLI 包装脚本，然后发送一条消息说明只有操作者才能做的事情：创建智能体账户；若启用自动合并，以启用它的账户登录一个 CLI；以智能体账户接受仓库邀请；为每个包装脚本运行 `auth login`；使用飞书时，创建并发布机器人应用，并用其密钥运行 `config init` 命令；使用 QQ 时，完成机器人的主体认证，在 DSH 启动时的环境中设置 `QQ_BOT_CLIENT_SECRET`，并把机器人加入目标群。等到操作者确认完成，然后用 `<wrapper> api user --jq .login` 检查每个登录。
 2. **安装并启动。** 遵循 `docs/006-deployment.md` 的安装、机器配置以及启动与停止三节。跳过本仓库的 `git clone`：你已在其检出目录中。如果第 7 个问题要求新的克隆，请克隆第 2 个问题中的仓库。若已有配置档，请跳过 `dsh superagent --from-default-profile` 命令（它会替换该配置档并删除其 `cordis.patch.yml`），改为编辑该文件而不是替换它。
-3. **设置。** 通过 `docs/006-deployment.md` 的管理 API 保存它们，顺序如下：`github` 来源、`feishu` 来源（若使用）、带允许列表的 `policy` 区块（使用飞书时，先用机器人 CLI 查找聊天 id），以及带第 7 个问题答案中准备命令的 `executor` 区块。然后保存提示词，并在交付要求中写入第 8 个问题的提交身份和第 9 个问题的自动合并答案。返回 `restarting: true` 的保存会重启 dsh-superagent：等到 `scripts/dsh-superagent status` 不再以 1 退出后再发下一个请求，并重新从 `GET settings` 读取版本号。
+3. **设置。** 通过 `docs/006-deployment.md` 的管理 API 保存它们，顺序如下：`github` 来源、`feishu` 来源（若使用）、`qq` 来源（若使用）、带允许列表的 `policy` 区块（使用飞书时，先用机器人 CLI 查找聊天 id；使用 QQ 时，在收到第一条 Trigger 后补成员 id），以及带第 7 个问题答案中准备命令的 `executor` 区块。然后保存提示词，并在交付要求中写入第 8 个问题的提交身份和第 9 个问题的自动合并答案。返回 `restarting: true` 的保存会重启 dsh-superagent：等到 `scripts/dsh-superagent status` 不再以 1 退出后再发下一个请求，并重新从 `GET settings` 读取版本号。
 4. **失败处理。** 被拒绝的保存会在响应体中指明初始配置问题。请在 `docs/006-deployment.md` 的故障排查表中找到它，修复后继续。只向操作者询问你无法自行修复的内容。
 
 ## 5. 验证与交接
@@ -76,6 +78,6 @@ grep -l -E 'id: dsh-superagent\b' "${DSH_HOME:-$HOME/.dsh}"/profiles/*/cordis.pa
 `scripts/dsh-superagent status` 以 0 退出且没有初始配置问题。如果你在操作者自己的 DSH 配置档中运行，请用你的计划任务工具创建 `docs/006-deployment.md` 中“每小时检查”一节的检查；否则将它的提示词交给操作者，让其在那边安排。然后发送一条不超过 300 字的消息：
 
 - 面板 URL，以及侧边栏中的 **Superagent** 条目是查看入口。
-- 如何试用：使用允许列表中的账户，在仓库的某个 issue 下评论 `@<agent login> <request>`。大约一分钟内，概览页就会出现一个工单。
+- 如何试用：使用允许列表中的账户，在仓库的某个 issue 下评论 `@<agent login> <request>`；或使用策略列表中的飞书、QQ 账户，在已配置的聊天中 @ 机器人。大约一分钟内，概览页就会出现一个工单。
 - 来自 `docs/000-philosophy.md` 责任（Responsibility）一节的、给操作者的三条规则：从小范围开始；调整以减少干扰；对智能体所说的话负责。
 - 更多阅读：按顺序阅读 `docs/` 中的编号文档。

@@ -1,9 +1,9 @@
 # QQ 与飞书机器人入口开发计划
 
 > 项目：superagent-control（SuperAgent 控制面增强）
-> 版本：v0.1
+> 版本：v0.2
 > 日期：2026-11-05
-> 状态：计划待执行
+> 状态：QQ Source 代码已实现，等待真实 AppID/AppSecret 联调；飞书等待平台配置
 > 关联文档：[项目设计预想](../项目设计预想.md)、[详细实施计划书](../SuperAgent详细实施计划书.md)、[上游架构说明](../SuperAgent原项目架构说明.md)
 > 上游代码：`dsh-superagent-prototype/`
 
@@ -356,9 +356,36 @@ QQ 官方限制：
 - [ ] M3-2 Markdown 消息与本地上下文缓存
 - [ ] M3-3 图片附件支持评估
 
-## 10. 参考资料
+## 10. 实施进展
 
-### 10.1 QQ 官方文档
+### 10.1 已完成
+
+- QQ SourceKind：AppID、AppSecret 环境变量、沙箱开关、接收群、其他群、单聊开关。
+- QQ 凭证管理：access token 获取、缓存、到期前刷新。
+- QQ 网关：获取 WebSocket 地址、Identify、心跳、Resume、断线重连。
+- QQ Trigger 归一化：群 @、群全量、单聊、机器人消息过滤、确定性消息 ID。
+- QQ 回复通道：群聊与单聊被动回复、稳定 `msg_seq`、重复与过期错误码处理。
+- 插件注册：`qq-watch` 构建入口、包导出、`cordis.patch.yml` 默认禁用。
+- 面板集成：Source 配置卡片、`qq` 健康项与中英文提示。
+- 单元测试：配置默认值、Trigger、scope、Policy 行、回复发送与错误码。
+- 文档：架构模块表、部署说明（中英文）。
+
+### 10.2 待联调
+
+- 在 QQ 开放平台创建机器人并完成主体认证。
+- 配置 AppID 与 `QQ_BOT_CLIENT_SECRET`，在沙箱群完成真实消息闭环。
+- 验证群聊被动回复窗口、单聊窗口、限频与断线恢复。
+- 飞书侧完成自建应用、`lark-cli` 与面板配置。
+
+### 10.3 与计划的差异
+
+- 凭证校验未接入 `deployment` 启动检查，改由 QQ Source 在连接时校验并上报 `qq` 健康状态，避免一个可选来源阻塞主链路。
+- `msg_seq` 由 outbox message id 稳定哈希得到，而不是持久化映射；重试仍然幂等，但没有处理同一触发消息上大量回复的序号冲突。
+- 首版只实现被动文本回复，不实现主动消息、群历史读取、Markdown 和图片。
+
+## 11. 参考资料
+
+### 11.1 QQ 官方文档
 
 - [使用 Websocket 接入](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/interface-framework/reference.html)
 - [事件订阅与通知](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/interface-framework/event-emit.html)
@@ -370,7 +397,7 @@ QQ 官方限制：
 - [QQ Bot 常见问题答疑](https://bot.q.qq.com/wiki/bot_FAQ/)
 - [接口域名说明](https://bot.q.qq.com/wiki/develop/api/)
 
-### 10.2 上游代码与文档
+### 11.2 上游代码与文档
 
 - `src/sources/kind.ts`：SourceKind 扩展点
 - `src/sources/feishu.ts`：飞书 Source 完整实现

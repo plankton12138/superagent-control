@@ -6,7 +6,7 @@
 >
 > 我们已为公开发布对其进行了调整，因此它与我们的内部版本，或与 *Exploring Super-agent Design: Towards a More Autonomous Agent System* 一文所描述的实现，并不完全相同。文章讨论的一些设计是未来发展的方向，并未在此原型中实现。
 
-dsh-superagent 是面向单个 GitHub 仓库的主动（proactive）编码智能体，以打包组件（bundle）形式提供给 [DeepSeek Harness](https://www.deepseek.com/en/harness/)。它监听 GitHub，并可选择监听飞书。当允许列表中的人向智能体请求工作时，它会创建一个工作项（work item），在自己的智能体会话和目录中处理，并在原对话中回复，例如通过一个拉取请求。Web 面板显示需要人工处理的事项。
+dsh-superagent 是面向单个 GitHub 仓库的主动（proactive）编码智能体，以打包组件（bundle）形式提供给 [DeepSeek Harness](https://www.deepseek.com/en/harness/)。它监听 GitHub，并可选择监听飞书或 QQ。当允许列表中的人向智能体请求工作时，它会创建一个工作项（work item），在自己的智能体会话和目录中处理，并在原对话中回复，例如通过一个拉取请求。Web 面板显示需要人工处理的事项。
 
 它也是一种与智能体协作的方式：**尽可能少占用人的注意力，尽可能多地提供价值。** 一个能为整个团队行动的智能体，也可能浪费整个团队的注意力，因此它只在被请求时，或在团队写下的规则允许时才采取行动，并且只在有人必须行动或可以使用某个结果时才发言。[docs/000-philosophy.md](docs/000-philosophy.zh-CN.md) 阐述这一原则及其对操作者的要求。
 
