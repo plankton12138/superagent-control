@@ -1,0 +1,10 @@
+node_modules/
+lib/
+.artifacts/
+.env
+coverage/
+.screenshots/
+.workbuddy/
+.vscode/
+.probe
+*.log
