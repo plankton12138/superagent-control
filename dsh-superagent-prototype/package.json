@@ -49,6 +49,7 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "mock": "tsdown --config tsdown.mock.config.ts && node .mock/mock-env.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm build"
   },
   "engines": {
