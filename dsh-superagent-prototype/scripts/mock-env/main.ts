@@ -23,7 +23,7 @@ import { MockFeishu } from './mock-feishu.ts'
 import { MockGithub } from './mock-github.ts'
 import { mockQqKind, mockQqTrigger, qqAllowed, qqGroupId } from './mock-qq.ts'
 import { PAGE } from './ui.ts'
-import { ARCHITECTURE_PAGE, CHANNEL_PAGE } from './architecture-ui.ts'
+import { ARCHITECTURE_PAGE, channelPage, repositoryPage } from './architecture-ui.ts'
 import { scenario, scenarios } from './scenarios.ts'
 import { eventView, runTrace, ticketView, type Run } from './trace.ts'
 import { inspectRun } from './inspect-run.ts'
@@ -131,11 +131,31 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     send(res, 404, { error: 'Unknown management route' })
     return
   }
-  const channelPage = ['/feishu', '/github', '/qq'].includes(url.pathname)
-  if (req.method === 'GET' && (channelPage || ['/', '/index.html', '/architecture', '/console'].includes(url.pathname))) {
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
-    res.end(channelPage ? CHANNEL_PAGE : url.pathname === '/console' ? PAGE : ARCHITECTURE_PAGE)
-    return
+  if (req.method === 'GET') {
+    if (url.pathname === '/github' && (url.searchParams.has('number') || ['issues', 'pulls'].includes(url.searchParams.get('tab') ?? ''))) {
+      return html(res, channelPage(github.repository))
+    }
+    const repository = /^\/github\/(tree|blob|raw)\/main(?:\/(.*))?$/.exec(url.pathname)
+    if (url.pathname === '/github' || repository) {
+      let path: string
+      try { path = decodeURIComponent(repository?.[2] ?? '') }
+      catch { return send(res, 400, { error: 'Invalid file path' }) }
+      const view = repository?.[1] ?? 'tree'
+      const isFile = Object.hasOwn(github.files, path)
+      if (view === 'raw') {
+        if (!isFile) return send(res, 404, { error: 'File not found' })
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' })
+        res.end(github.files[path])
+        return
+      }
+      const tree = view === 'tree'
+      const exists = tree ? !path || Object.keys(github.files).some(file => file.startsWith(`${path}/`)) : isFile
+      return html(res, repositoryPage({ repository: github.repository, files: github.files, path,
+        view: tree ? 'tree' : 'blob', source: url.searchParams.get('view') === 'source' }), exists ? 200 : 404)
+    }
+    if (url.pathname === '/feishu' || url.pathname === '/qq') return html(res, channelPage())
+    if (url.pathname === '/console') return html(res, PAGE)
+    if (['/', '/index.html', '/architecture'].includes(url.pathname)) return html(res, ARCHITECTURE_PAGE)
   }
   if (req.method === 'GET' && url.pathname === '/mock/state') return send(res, 200, state(url.searchParams.get('run')))
   if (req.method === 'GET' && url.pathname === '/mock/inspection') return send(res, 200, inspection(url.searchParams.get('run')))
@@ -352,9 +372,10 @@ function channelState() {
   for (const run of [...runs].reverse()) for (const event of run.events) {
     const { meta, kind } = event
     if (!meta) continue
-    const pulls = [...new Set(eventView(store, event).ticketIds.flatMap(id => {
-      const ticket = store.tickets.get(id)
-      const pull = ticket && pullOf(ticket)
+    const view = eventView(store, event)
+    const tickets = view.ticketIds.flatMap(id => store.tickets.get(id) ?? [])
+    const pulls = [...new Set(tickets.flatMap(ticket => {
+      const pull = pullOf(ticket)
       return pull && github.pull(pull) ? [pull] : []
     }))]
     for (const pull of pulls) if (!pullRuns.has(pull)) pullRuns.set(pull, run.id)
@@ -364,11 +385,12 @@ function channelState() {
       if (kind === 'feishu' && !meta.direct && meta.chatId !== feishu.chatId) continue
       chat.push({ runId: run.id, source: kind, at: event.at, text: event.text, addressed: event.addressed,
         messageId: meta.messageId, parentId: meta.parentId, direct: meta.direct === true, pulls,
+        decision: view.decision, result: view.result, stage: tickets[0] && ticketView(tickets[0]).stage,
         author: kind === 'qq' ? meta.userOpenid ?? meta.memberOpenid : event.author,
         replies: receipts.get(`${kind}:${meta.messageId}`) ?? [] })
     }
   }
-  return { repository: github.repository, chat, conversations: github.conversations().map(item => ({
+  return { repository: github.repository, files: github.files, chat, conversations: github.conversations().map(item => ({
     ...item, runId: (item.isPr ? pullRuns : issueRuns).get(item.number),
     comments: item.comments.map(comment => ({ ...comment, runId: commentRuns.get(`${item.number}:${comment.id}`) })),
     replies: receipts.get(`github:${item.number}`) ?? [],
@@ -413,6 +435,10 @@ async function json(req: IncomingMessage): Promise<Record<string, unknown>> {
 function send(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
   res.end(JSON.stringify(value))
+}
+function html(res: ServerResponse, page: string, status = 200): void {
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+  res.end(page)
 }
 
 let closing = false

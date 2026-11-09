@@ -19,6 +19,7 @@ export type Observation = RuntimeObservation
   | { kind: 'session'; at: string; sessionId: string; state: 'created' | 'running' | 'idle'; preset?: string; workspace?: string }
   | (ToolInvocation & { kind: 'tool-start'; at: string })
   | (ToolInvocation & { kind: 'tool'; at: string; output?: unknown; error?: string })
+  | { kind: 'repository-read'; at: string; sessionId: string; repository: string; path: string; content: string }
 interface RegisteredTool { name: string; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
 interface FakeAgent {
   id: string
@@ -55,6 +56,7 @@ export interface MockHost {
   agents: Map<string, FakeAgent>
   deliveries: Delivery[]
   observations: readonly Observation[]
+  observe(event: Observation): void
   onDelivery(listener: (delivery: Delivery) => void): () => void
   runTool(sessionId: string, name: string, args: unknown): Promise<unknown>
   setIdle(sessionId: string): void
@@ -240,7 +242,7 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   }
   const wantIdle = (sessionId: string) => agents.get(sessionId)?.status === 'idle'
   return {
-    runtime, ctx, stateDir, agents, deliveries, observations,
+    runtime, ctx, stateDir, agents, deliveries, observations, observe,
     onDelivery: listener => { listeners.add(listener); return () => listeners.delete(listener) },
     runTool, setIdle, wantIdle,
     orchestrator: (req, res) => orchestratorHandler?.(req, res),

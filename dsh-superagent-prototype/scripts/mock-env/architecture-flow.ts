@@ -129,7 +129,11 @@ export const FLOW_SCRIPT = String.raw`
   function flowState(facts) {
     const timed = facts.filter(fact => fact.at);
     const mapped = new Map();
-    for (const fact of timed) mapped.set(factNode(fact, facts), fact);
+    for (const fact of timed) {
+      const node = factNode(fact, facts);
+      if (node === 'outbox' && !fact.data?.channel && mapped.get(node)?.data?.channel) continue;
+      mapped.set(node, fact);
+    }
     // A rejected batch still reached Eval's gate check even though no candidate was started.
     if (!mapped.has('eval') && mapped.has('gate')) mapped.set('eval', { state: '准入检查' });
     // Intake and its terminal outcome are two visible nodes.
@@ -144,7 +148,7 @@ export const FLOW_SCRIPT = String.raw`
     const shortcut = timed.some(fact => fact.node === 'router'
       && ['调用 orchestrator_route','orchestrator_route'].includes(fact.title) && fact.state !== 'error');
     const decisions = timed.filter(fact => fact.node === 'decision' && !gateRejection(fact, facts));
-    const output = timed.filter(fact => fact.node === 'outbox');
+    const output = timed.filter(fact => fact.node === 'outbox' && fact.data?.channel && ['pending','sent'].includes(fact.state));
     const edges = {
       'source,intake': has('source') && has('intake'),
       'intake,filtered': has('filtered'),

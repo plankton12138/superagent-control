@@ -27,6 +27,12 @@ const issue = (title: string, body: string, behavior: WorkerBehavior = 'ready'):
   ({ type: 'issue', author: 'alice', title, body, behavior })
 
 export const scenarios = {
+  answer: {
+    title: '飞书私聊 · 提问到回答', source: '飞书 × GitHub',
+    description: 'Alice 在私聊问没有账单时导出会发生什么。',
+    expected: 'Worker 读取虚拟仓库的导出代码，提交答案；主 Session 通过 Outbox 把答案发回 Alice 的私聊。',
+    events: [{ type: 'feishu', author: 'ou_alice', body: '没有账单时，导出会生成 CSV 吗？', behavior: 'answer', direct: true }],
+  },
   feishu: {
     title: '飞书请求与 PR 交付', source: '飞书 × GitHub',
     description: '群成员 @ 机器人，请它补齐账单导出空态。Worker 会提交虚拟 PR，等待合并。',

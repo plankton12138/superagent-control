@@ -106,10 +106,13 @@ export function inspectRun(host: MockHost, run: Run) {
     } else if (kind === 'session' && workers.has(observed.sessionId)) {
       facts.push({ node: observed.state === 'created' ? 'sessions' : 'worker', at, title: 'Worker Session 状态',
         state: observed.state, detail: observed.sessionId, data: observed })
+    } else if (kind === 'repository-read' && workers.has(observed.sessionId)) {
+      facts.push({ node: 'worker', at, title: 'Worker 读取虚拟仓库文件', state: 'read', detail: `${observed.repository}/${observed.path}`, data: observed })
     } else if ((kind === 'tool-start' || kind === 'tool') && (workers.has(observed.sessionId) || references(observed.input, ids))) {
-      const node = workers.has(observed.sessionId) ? 'worker' : observed.name.startsWith('orchestrator_eval') ? 'assessment' : 'router'
+      const node = workers.has(observed.sessionId) ? 'worker' : observed.name === 'orchestrator_reply' ? 'outbox'
+        : observed.name.startsWith('orchestrator_eval') ? 'assessment' : 'router'
       if (kind === 'tool-start') {
-        if (['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_report'].includes(observed.name)) {
+        if (['orchestrator_route', 'orchestrator_eval_decide', 'orchestrator_report', 'orchestrator_reply'].includes(observed.name)) {
           facts.push({ node, at, title: '调用 ' + observed.name, state: 'submitted',
             data: { sessionId: observed.sessionId, assignmentId: observed.assignmentId, input: observed.input } })
         }
@@ -123,7 +126,7 @@ export function inspectRun(host: MockHost, run: Run) {
           detail: `PR #${object(observed.input).pr_number}`, data: observed })
       }
     } else if (kind === 'outbox' && observed.message.ticketId && ids.has(observed.message.ticketId)) {
-      facts.push({ node: 'outbox', at, title: '原渠道回执', state: observed.status,
+      facts.push({ node: 'outbox', at, title: observed.message.kind === 'acknowledgement' ? '原渠道接单确认' : '原渠道结果回执', state: observed.status,
         detail: `${observed.message.channel.source} · ${observed.message.kind}`, data: observed.message })
     }
   }

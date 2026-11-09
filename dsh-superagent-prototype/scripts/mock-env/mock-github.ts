@@ -43,6 +43,12 @@ export class MockGithub {
   readonly agent = 'agent-bot'
   readonly stateDir: string
   readonly cli: string
+  readonly files: Readonly<Record<string, string>> = {
+    '.gitignore': 'node_modules/\ndist/\n*.csv\n',
+    'package.json': '{\n  "name": "billing-desk",\n  "private": true,\n  "type": "module"\n}\n',
+    'README.md': '# Billing Desk\n\n虚拟账单管理项目。\n- 账单导出：src/billing/export.ts\n- 导出格式：CSV（UTF-8），列为 id 和 amount。\n- 没有可导出的账单时返回空态提示，不生成文件。\n',
+    'src/billing/export.ts': 'type Bill = { id: string; amount: number }\n\nexport function exportBills(bills: Bill[]) {\n  if (!bills.length) return { message: "暂无账单可导出" }\n  const csv = ["id,amount", ...bills.map(b => `${b.id},${b.amount}`)].join("\\n")\n  return { filename: "bills.csv", csv }\n}\n',
+  }
   private readonly issues = new Map<number, StoredIssue>()
   private readonly comments = new Map<number, Map<number, GithubComment>>()
   private readonly pulls = new Map<number, Pull>()

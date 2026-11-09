@@ -1,5 +1,6 @@
 import { ARCHITECTURE_SCRIPT } from './architecture-client.ts'
-import { CHANNEL_CONTENT, CHANNEL_STYLE } from './channel-ui.ts'
+import { channelContent, CHANNEL_STYLE } from './channel-ui.ts'
+import { GITHUB_STYLE, repositoryContent } from './github-ui.ts'
 
 const shell = String.raw`<!doctype html>
 <html lang="zh-CN">
@@ -130,6 +131,7 @@ footer{color:var(--muted);font:11px var(--mono);margin-top:12px}
 .node strong{font-size:11px}
 .mast::before,.mast::after{opacity:.48}.systems{grid-template-columns:repeat(3,minmax(0,1fr))}}
 ${CHANNEL_STYLE}
+${GITHUB_STYLE}
 </style>
 </head>
 <body>
@@ -138,7 +140,8 @@ ${CHANNEL_STYLE}
   <details class="menu"><summary>更多</summary><div class="menu-body"><a href="/console#custom">自定义事件与详情</a><a href="/console">全部工单与 Session 日志</a><button class="button" id="pause" type="button" disabled>暂停处理</button></div></details>
 </nav></div></header>`
 
-export const CHANNEL_PAGE = shell + CHANNEL_CONTENT
+export const channelPage = (repository?: string) => shell + channelContent(repository)
+export const repositoryPage = (options: Parameters<typeof repositoryContent>[0]) => shell + repositoryContent(options)
 
 export const ARCHITECTURE_PAGE = shell + String.raw`
 <main>

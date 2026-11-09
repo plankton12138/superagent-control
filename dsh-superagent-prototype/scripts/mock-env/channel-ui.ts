@@ -1,3 +1,5 @@
+import { repositoryHeader } from './github-ui.ts'
+
 export const CHANNEL_STYLE = String.raw`
 .channel-layout{display:grid;grid-template-columns:minmax(170px,24%) minmax(0,1fr);gap:9px;align-items:start}
 .channel-side{padding:7px;display:grid;gap:5px}.channel-side button{text-align:left;overflow-wrap:anywhere}
@@ -21,9 +23,10 @@ export const CHANNEL_STYLE = String.raw`
 @media(max-width:680px){.channel-layout{grid-template-columns:minmax(0,1fr)}.channel-list{max-height:140px}.channel-thread{max-height:350px}}
 `
 
-export const CHANNEL_CONTENT = String.raw`
-<main>
-  <header class="mast"><div><div class="eyebrow">/dev/mock · SOURCE TERMINAL</div><h1 id="channel-title">虚拟渠道</h1></div><p class="health">LOCAL SANDBOX · 本地模拟</p></header>
+export const channelContent = (repository?: string) => String.raw`
+${repository ? repositoryHeader(repository) : ''}
+<main${repository ? ' class="gh-wrap gh-main"' : ''}>
+  ${repository ? '' : '<header class="mast"><div><div class="eyebrow">/dev/mock · SOURCE TERMINAL</div><h1 id="channel-title">虚拟渠道</h1></div><p class="health">LOCAL SANDBOX · 本地模拟</p></header>'}
   <p class="hint" id="channel-hint"></p>
   <div class="alert" id="channel-error" role="alert"></div>
   <div class="channel-layout">
@@ -43,7 +46,8 @@ export const CHANNEL_CONTENT = String.raw`
         <label id="issue-title-row" hidden>标题<input type="text" id="issue-title" maxlength="120" required></label>
         <p id="replying" class="meta" hidden><span id="reply-target"></span> <button type="button" class="link-button" id="cancel-reply">取消回复</button></p>
         <label><span id="body-label">消息</span><textarea id="channel-body" maxlength="3000" rows="3"></textarea></label>
-        <div class="compose-options"><label class="check" id="mention-row"><input type="checkbox" id="mention-bot" checked> @ SuperAgent</label>
+        <div class="compose-options"><label>测试模式<select id="worker-mode"><option value="answer">提问并收到回答</option><option value="pull">提交虚拟 PR</option></select></label>
+          <label class="check" id="mention-row"><input type="checkbox" id="mention-bot" checked> @ SuperAgent</label>
           <button class="link-button" id="insert-example" type="button">填入示例</button></div>
         <div><button class="button primary" type="submit" id="send-channel" disabled>发送</button></div>
       </form>
@@ -61,7 +65,8 @@ export const CHANNEL_CONTENT = String.raw`
   const name = gh ? 'GitHub' : feishu ? '飞书' : 'QQ';
   const params = new URLSearchParams(location.search);
   let number = gh && Number(params.get('number')) || 0;
-  let mode = gh ? number ? 'pulls' : 'issues' : params.get('mode') === 'direct' ? 'direct' : 'group';
+  let mode = gh ? params.get('tab') === 'pulls' || number && !params.has('tab') ? 'pulls' : 'issues'
+    : params.get('mode') === 'direct' ? 'direct' : 'group';
   let replyTo = '';
   let state;
   let busy = false;
@@ -94,7 +99,16 @@ export const CHANNEL_CONTENT = String.raw`
     return '<article class="channel-message"' + (bot ? ' data-bot' : '') + (reply ? ' data-reply' : '') + '><header><strong>' + esc(label(author))
       + '</strong><time class="subtle">' + esc(time(at)) + '</time>' + traceLink(runId) + controls + '</header><p>' + esc(text) + '</p></article>';
   }
-  const botLine = (item, reply = false) => line({ ...item, author:'SuperAgent' }, '', true, reply);
+  const botLine = (item, reply = false) => line({ ...item, author:'SuperAgent' }, '<span class="badge">'
+    + (item.kind === 'acknowledgement' ? '接单确认' : item.kind === 'notice' ? '状态通知' : '回答 / 结果') + '</span>', true, reply);
+  function messageStatus(msg) {
+    if (msg.replies.some(reply => reply.kind !== 'acknowledgement')) return '';
+    const stage = msg.stage;
+    const value = msg.result === 'filtered' ? '来源已过滤' : msg.decision === 'ignore' ? '未接单 · 查看 Trace'
+      : stage?.action === 'queued' ? '等待 Worker 槽位' : msg.pulls.length ? '等待 PR 处理'
+      : stage?.stage === 'working' ? '处理中' : !msg.replies.length && msg.result === 'pending' ? '待处理' : '';
+    return value ? '<span class="badge wait">' + value + '</span>' : '';
+  }
   function draw() {
     const item = current();
     const emptyPulls = gh && mode === 'pulls' && !number;
@@ -102,8 +116,10 @@ export const CHANNEL_CONTENT = String.raw`
       : direct() ? label(author()) + ' ↔ SuperAgent' : '# 沙箱测试群';
     $('thread-title').textContent = title;
     const modeButton = (key, title) => '<button class="button" type="button" data-mode="' + key + '" aria-pressed="' + (mode === key) + '">' + title + '</button>';
-    render('channel-modes', gh ? modeButton('issues', 'Issues') + modeButton('pulls','Pull requests')
-      : modeButton('group','群聊') + modeButton('direct','私聊'));
+    if (gh) document.querySelectorAll('[data-repo-tab]').forEach(link => {
+      if (link.dataset.repoTab === mode) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current');
+    });
+    else render('channel-modes', modeButton('group','群聊') + modeButton('direct','私聊'));
     render('channel-list', gh ? '<button class="button" type="button" data-number="0" aria-current="' + (!number && mode === 'issues') + '">+ 新建 Issue</button>'
       + (state?.conversations ?? []).filter(row => row.isPr === (mode === 'pulls')).map(row => '<button class="button" type="button" data-number="'
         + row.number + '" aria-current="' + (row.number === number) + '"><span class="mono">#' + row.number + '</span> ' + esc(row.title)
@@ -116,7 +132,7 @@ export const CHANNEL_CONTENT = String.raw`
         .sort((a,b) => String(a.at).localeCompare(String(b.at))).map(row => row.bot ? botLine(row) : line(row)).join('')
       : empty(emptyPulls ? '暂无虚拟 PR。等 Worker 提交 PR 后会显示在这里。' : '填写标题和描述，即可创建虚拟 Issue。Worker 提交的 PR 会出现在 Pull requests。')
       : messages().map(msg => {
-        const controls = (feishu ? '<button type="button" class="link-button" data-reply-to="' + esc(msg.messageId) + '">线程回复</button>' : '')
+        const controls = messageStatus(msg) + (feishu ? '<button type="button" class="link-button" data-reply-to="' + esc(msg.messageId) + '">线程回复</button>' : '')
           + msg.pulls.map(pull => '<a href="/github?number=' + pull + '">虚拟 PR #' + pull + '</a>').join('');
         return line({ ...msg, text:(msg.addressed === 'mention' ? '@SuperAgent ' : '') + msg.text }, controls, false, !!msg.parentId)
           + msg.replies.map(reply => botLine(reply, true)).join('');
@@ -140,10 +156,10 @@ export const CHANNEL_CONTENT = String.raw`
       if (id !== refreshId) return;
       const first = !state;
       state = snapshot;
-      if (first && number) {
+      if (first && gh) {
         const item = current();
-        mode = item?.isPr ? 'pulls' : 'issues';
-        if (!item) number = 0;
+        if (item) mode = item.isPr ? 'pulls' : 'issues';
+        else number = state.conversations.find(row => row.isPr === (mode === 'pulls'))?.number ?? 0;
       }
       draw();
     } catch (error) { if (id === refreshId) $('channel-error').textContent = error.message; }
@@ -161,7 +177,10 @@ export const CHANNEL_CONTENT = String.raw`
     replyTo = '';
     $('channel-status').textContent = '';
     const url = new URL(location.href);
-    if (gh) { if (number) url.searchParams.set('number', number); else url.searchParams.delete('number'); }
+    if (gh) {
+      url.searchParams.set('tab', mode);
+      if (number) url.searchParams.set('number', number); else url.searchParams.delete('number');
+    }
     else { if (direct()) url.searchParams.set('mode','direct'); else url.searchParams.delete('mode'); }
     history.replaceState(null, '', url);
     draw();
@@ -170,7 +189,6 @@ export const CHANNEL_CONTENT = String.raw`
     const button = event.target.closest('[data-mode]');
     if (!button || busy || button.dataset.mode === mode) return;
     mode = button.dataset.mode;
-    if (gh) number = state?.conversations.find(item => item.isPr === (mode === 'pulls'))?.number ?? 0;
     select();
   });
   $('channel-list').addEventListener('click', event => {
@@ -189,8 +207,10 @@ export const CHANNEL_CONTENT = String.raw`
   $('insert-example').addEventListener('click', () => {
     const title = $('issue-title');
     const body = $('channel-body');
-    if (gh && !number && !title.value) title.value = '补上账单导出的空态提示';
-    if (!body.value) body.value = gh && number ? '请在本轮补上空态文案的验证步骤。' : '请补上账单导出的空态提示，并提交 PR。';
+    const answer = $('worker-mode').value === 'answer';
+    if (gh && !number && !title.value) title.value = answer ? '账单导出会生成什么文件？' : '补上账单导出的空态提示';
+    if (!body.value) body.value = answer ? '没有账单时，导出会生成 CSV 吗？'
+      : gh && number ? '请在本轮补上空态文案的验证步骤。' : '请补上账单导出的空态提示，并提交 PR。';
     body.focus();
   });
   $('thread-actions').addEventListener('click', event => {
@@ -214,7 +234,7 @@ export const CHANNEL_CONTENT = String.raw`
       const result = await request('/mock/event', {
         type:gh ? number ? 'comment' : 'issue' : source,
         author:author(), body, title, number:number || undefined, isPr:current()?.isPr,
-        direct:direct(), mentions:!direct() && $('mention-bot').checked, replyTo:replyTo || undefined, behavior:'pull',
+        direct:direct(), mentions:!direct() && $('mention-bot').checked, replyTo:replyTo || undefined, behavior:$('worker-mode').value,
       });
       if (gh && !number) {
         number = result.number;
@@ -226,12 +246,13 @@ export const CHANNEL_CONTENT = String.raw`
       $('channel-status').innerHTML = (gh ? '已提交。' : '已发送。') + ' ' + traceLink(result.runId);
     });
   });
-  $('channel-title').textContent = '虚拟 ' + name;
-  document.title = '虚拟 ' + name + ' · SuperAgent';
+  if (gh) document.body.classList.add('gh-page');
+  else $('channel-title').textContent = '虚拟 ' + name;
+  document.title = gh ? 'mock/repo · 虚拟 GitHub' : '虚拟 ' + name + ' · SuperAgent';
   $(source + '-link').setAttribute('aria-current','page');
-  $('side-title').textContent = gh ? '虚拟仓库 · mock/repo' : '会话与身份';
-  $('channel-hint').textContent = gh ? '模拟创建 Issue、给 Issue 或 PR 留言，以及处理 Worker 提交的虚拟 PR。'
-    : '以群友或私聊用户身份发消息。切换到访客可以验证未授权时的 Gate 决策。';
+  $('side-title').textContent = gh ? '讨论列表' : '会话与身份';
+  $('channel-hint').textContent = gh ? '在 Issue 或评论中提问，或者处理虚拟 PR。'
+    : '试试「填入示例 → 发送消息」：Worker 会读取虚拟仓库，把答案发回这里。回答来自本地预设逻辑。';
   $('pause').hidden = true;
   draw();
   void refresh();

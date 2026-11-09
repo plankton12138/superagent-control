@@ -5,8 +5,10 @@
  */
 import type { MockHost } from './dsh-host.ts'
 import type { MockGithub } from './mock-github.ts'
+import { followupOwners } from '../../src/core/index.ts'
+import { allowedSender } from '../../src/policy.ts'
 
-export const workerBehaviors = ['ready', 'blocked', 'failed', 'silent', 'progress', 'pull'] as const
+export const workerBehaviors = ['answer', 'ready', 'blocked', 'failed', 'silent', 'progress', 'pull'] as const
 export type WorkerBehavior = typeof workerBehaviors[number]
 export type AssessmentFixture = 'copy-fix' | 'unclear'
 
@@ -30,6 +32,9 @@ export class AutoPilot {
   private readonly assessments = new Map<string, AssessmentFixture>()
   private readonly followups = new Set<string>()
   private readonly assignments = new Map<string, string>()
+  private readonly workerTurns = new Map<string, string>()
+  private readonly followupTurns = new Map<string, number>()
+  private readonly answeredFollowups = new Set<string>()
   private readonly handled = new Set<string>()
   private readonly stopListeners: (() => void)[] = []
   private counter = 0
@@ -73,11 +78,22 @@ export class AutoPilot {
 
   private onMain(text: string): void {
     if (!this.autoRoute || this.stopped) return
-    let card: { kind?: string; trigger_id?: string; strength?: string }
+    let card: { kind?: string; trigger_id?: string; strength?: string; state?: string; summary?: string; answer_to?: string; ticket?: { ticket_id: string } }
     try { card = JSON.parse(text) as typeof card } catch { return }
+    if (card.kind === 'worker_report' && card.ticket?.ticket_id && card.summary && (card.answer_to || card.state === 'ready')) {
+      const reply = { ticket_id: card.ticket.ticket_id, purpose: card.answer_to ? 'answer' : 'result',
+        ...(card.answer_to ? { trigger_id: card.answer_to } : {}), text: card.summary }
+      void this.deliverResult(reply).catch(error => console.error('[mock] result delivery failed:', String(error)))
+      return
+    }
     if (card.kind !== 'candidate' || !card.trigger_id || this.handled.has(card.trigger_id)) return
     this.handled.add(card.trigger_id)
     void this.route(card.trigger_id, card.strength === 'explicit')
+  }
+
+  private async deliverResult(reply: Record<string, unknown>): Promise<void> {
+    await this.host.runtime.idle()
+    if (!this.stopped) await this.tool(this.host.runtime.masterId, 'orchestrator_reply', reply)
   }
 
   private async route(triggerId: string, explicit: boolean): Promise<void> {
@@ -131,11 +147,7 @@ export class AutoPilot {
     let assignment: { ticket_id?: string; assignment?: number; trigger_id?: string }
     try { assignment = JSON.parse(text) as typeof assignment } catch { return }
     if (assignment.trigger_id) {
-      const id = assignment.trigger_id
-      if (this.followups.delete(id)) {
-        void this.tool(sessionId, 'orchestrator_ack', { trigger_id: id, text: '收到补充要求，会在原工单一起处理。' })
-          .catch(error => console.error('[mock] follow-up acknowledgement failed:', String(error)))
-      }
+      void this.runFollowup(sessionId, assignment.trigger_id)
       return
     }
     if (!assignment.ticket_id) return
@@ -147,7 +159,54 @@ export class AutoPilot {
     if (assignmentId) void this.runWorker(ticketId, sessionId, assignmentId)
   }
 
+  private async runFollowup(sessionId: string, triggerId: string): Promise<void> {
+    const ticketId = sessionId.slice('worker-'.length)
+    this.followupTurns.set(sessionId, (this.followupTurns.get(sessionId) ?? 0) + 1)
+    try {
+      await this.host.runtime.idle()
+      const { store } = this.host.runtime
+      const ticket = store.tickets.get(ticketId)
+      const trigger = store.triggers.get(triggerId)
+      if (this.stopped || !ticket || ticket.ended || !trigger || !followupOwners(trigger, store).includes(ticketId)) return
+      if (this.behaviorByTrigger.get(triggerId) === 'answer' && trigger.addressed
+        && allowedSender(store.settings(), trigger.actor) && !this.answeredFollowups.has(triggerId)) {
+        this.answeredFollowups.add(triggerId)
+        const ready = ticket.assignments.at(-1)?.report?.state === 'ready' && !this.workerTurns.has(sessionId)
+        await this.report(sessionId, { state: ready ? 'ready' : 'progress', summary: this.answer(sessionId, trigger.text), reply_to_trigger_id: triggerId })
+      } else if (this.followups.delete(triggerId)) {
+        await this.tool(sessionId, 'orchestrator_ack', { trigger_id: triggerId, text: '收到补充要求，会在原工单一起处理。' })
+      }
+    } catch (error) {
+      console.error('[mock] follow-up failed:', String(error))
+    } finally {
+      const remaining = (this.followupTurns.get(sessionId) ?? 1) - 1
+      if (remaining) this.followupTurns.set(sessionId, remaining)
+      else this.followupTurns.delete(sessionId)
+      this.finishTurn(sessionId)
+    }
+  }
+
+  private finishTurn(sessionId: string): void {
+    if (!this.workerTurns.has(sessionId) && !this.followupTurns.has(sessionId)) this.host.setIdle(sessionId)
+  }
+
+  private answer(sessionId: string, question: string): string {
+    const billing = /账单|导出|格式|文件名|输出|空态|billing|export|csv/i.test(question)
+    const path = billing ? 'src/billing/export.ts' : 'README.md'
+    const content = this.github.files[path]!
+    this.host.observe({ kind: 'repository-read', at: new Date().toISOString(), sessionId, repository: this.github.repository, path, content })
+    if (!billing) return '我查了虚拟仓库的 README。这个示例项目只包含账单导出逻辑；你可以问导出格式、文件名或没有账单时的提示。其他问题在这个示例仓库里没有足够资料。'
+    const hint = /return \{ message: "([^"]+)" \}/.exec(content)?.[1]
+    const filename = /filename: "([^"]+)"/.exec(content)?.[1]
+    const columns = /const csv = \["([^"]+)"/.exec(content)?.[1]?.split(',')
+    if (!hint || !filename || !columns?.length) return `我读取了 ${path}，但没有找到预设示例的导出定义。`
+    if (/空态|没有|为空|空数据|empty|零条/i.test(question)) return `没有账单时不会生成 CSV 文件，只会返回提示「${hint}」。依据：${path} 的空列表分支。`
+    return `账单导出会生成 ${filename}，列为 ${columns.join('、')}。如果没有账单，只会返回提示「${hint}」。依据：${path}。`
+  }
+
   private async runWorker(ticketId: string, sessionId: string, assignmentId: string): Promise<void> {
+    this.workerTurns.set(sessionId, assignmentId)
+    let keepRunning = false
     try {
       await this.host.runtime.idle()
       await delay(400)
@@ -159,6 +218,12 @@ export class AutoPilot {
       const ticket = this.live(ticketId, assignmentId)
       if (this.stopped || !ticket) return
       switch (this.behaviorOf(ticketId)) {
+        case 'answer': {
+          const trigger = this.host.runtime.store.triggers.get(ticket.origin.triggerId)
+          if (!trigger) throw new Error('找不到工单的原始问题')
+          await this.report(sessionId, { state: 'ready', summary: this.answer(sessionId, trigger.text), reply_to_trigger_id: trigger.id })
+          break
+        }
         case 'ready':
           await this.report(sessionId, { state: 'ready', summary: '模拟 Worker 已完成预设执行步骤。' })
           break
@@ -176,13 +241,16 @@ export class AutoPilot {
           break
         case 'silent':
           // Leave the assignment running so stop, pause and concurrency can be exercised.
+          keepRunning = true
           return
         case 'progress':
           break
       }
-      this.host.setIdle(sessionId)
     } catch (error) {
       console.error('[mock] simulated worker failed:', String(error))
+    } finally {
+      if (!keepRunning && this.workerTurns.get(sessionId) === assignmentId) this.workerTurns.delete(sessionId)
+      this.finishTurn(sessionId)
     }
   }
 

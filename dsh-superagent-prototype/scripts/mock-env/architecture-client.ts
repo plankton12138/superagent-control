@@ -130,6 +130,8 @@ ${FLOW_SCRIPT}
         + ' · ' + esc(output.policy_version) + '</p>' : '';
     const routing = Array.isArray(output?.results) ? output.results.map(item => '<p class="meta">' + badge(item.decision ?? item.kind)
       + ' ' + esc(item.refused ?? item.reason) + (item.ticket?.ticket_id ? ' · 工单 ' + mono(item.ticket.ticket_id) : '') + '</p>').join('') : '';
+    const file = fact.data.kind === 'repository-read' && typeof fact.data.path === 'string' ? '<p><a href="/github/blob/main/'
+      + fact.data.path.split('/').map(encodeURIComponent).join('/') + '">打开虚拟仓库文件</a></p>' : '';
     const raw = record === undefined ? '' : '<details class="raw" data-detail="' + esc(selected + ':' + (fact.at ?? 'snapshot') + ':' + index)
       + '"><summary>输入、输出与记录 JSON</summary><pre>' + esc(record) + '</pre></details>';
     return '<article class="fact"><h3>' + esc(fact.title) + (fact.state ? ' ' + badge(fact.state) : '') + '</h3>'
@@ -140,7 +142,7 @@ ${FLOW_SCRIPT}
       + (call?.summary ? '<p>' + esc(call.summary) + '</p>' : '')
       + (fact.data.execution?.directory ? '<p class="meta">工作目录 ' + mono(fact.data.execution.directory) + '</p>' : '')
       + (reason ? '<p class="alert">' + esc(reason) + '</p>' : '')
-      + context + routing + ruleRows(fact) + raw + '</article>';
+      + file + context + routing + ruleRows(fact) + raw + '</article>';
   }
   function renderInspector() {
     const [label,sub,desc,source] = modules[selected];
