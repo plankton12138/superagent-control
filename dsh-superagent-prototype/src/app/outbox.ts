@@ -56,7 +56,9 @@ export class Outbox implements OutboxPort {
   }
 
   private settle(message: OutboundMessage, outcome: 'sent' | DropReason): void {
-    this.host.store.receipts.settle(message, outcome)
-    this.host.observe?.(message, outcome === 'sent' ? 'sent' : 'dropped')
+    this.host.store.atomic(() => {
+      this.host.store.receipts.settle(message, outcome)
+      this.host.observe?.(message, outcome === 'sent' ? 'sent' : 'dropped')
+    })
   }
 }

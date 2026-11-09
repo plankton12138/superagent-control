@@ -64,10 +64,12 @@ export class Tickets extends EnginePart {
     const ticket = this.require(ticketId)
     const followed = threadKey(thread)
     const follow = ticket.follows?.find(item => item.thread === followed)
+    const changed = !follow || !!follow.closed || own && !follow.own
     // Re-binding a thread reopens it if previously closed; `own` remains true once set.
     if (follow) { follow.own ||= own; delete follow.closed } else ticket.follows = [...ticket.follows ?? [], { thread: followed, own }]
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
+    if (changed) this.emit('thread.bound', { ticketId, threadKey: followed, own: follow?.own ?? own })
     return ticket
   }
   /**
@@ -238,6 +240,9 @@ export class Tickets extends EnginePart {
     const held = liveTicket(ticket) && automatic(input) && waitsForPerson(ticket)
     if (!held) ticket.undelivered.push(input.id)
     this.repo.tickets.save(ticket)
+    if (input.kind === 'trigger') this.emit('input.added', {
+      ticketId: ticket.id, inputId: input.id, triggerId: input.triggerId, context: !!input.context,
+    })
     if (!liveTicket(ticket) || held) return
     const running = runningAssignment(ticket), latest = latestAssignment(ticket)
     if (running) this.options.executor.deliver(ticket, running)

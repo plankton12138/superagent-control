@@ -6,6 +6,7 @@ import { reportRelay } from '../src/app/notices.ts'
 import { WorkerSlots, inputMessage, mandateInstructions, ticketExecution, transient, triggerMessage } from '../src/executor/dsh.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { Commands } from '../src/infra/commands.ts'
+import { commentTrigger } from '../src/sources/github-trigger.ts'
 import { deferred, waitUntil } from './fixtures/async.ts'
 import { CHAT, MEMBER, feishu, startRuntime, type Host } from './fixtures/host.ts'
 
@@ -13,6 +14,43 @@ let h: Host
 beforeEach(async () => { h = await startRuntime() })
 afterEach(async () => { await h.stop() })
 const lark = { users: [{ member_id: MEMBER, name: 'Alice' }], has_more: false }
+
+it('records a PR follow-up on the subscribed worker only, with separate delivery and read facts', async () => {
+  const a = await h.acceptedTicket(feishu('1', '@bot Fix A'))
+  const b = await h.acceptedTicket(feishu('2', '@bot Fix B'))
+  const { store, engine } = h.runtime
+  engine.bindThread(a.ticket.id, { source: 'github', id: '42' }, true)
+  const comment = commentTrigger({
+    id: 81, body: 'Add a boundary test', user: { login: 'alice' },
+    html_url: 'https://github.com/acme/widgets/pull/42#issuecomment-81', created_at: new Date().toISOString(),
+  }, { number: 42, isPr: true }, 'conversation', 'agent-bot')
+  const before = store.observationCursor()
+  h.runtime.receive(comment)
+  await h.runtime.idle()
+  const input = store.tickets.get(a.ticket.id)!.inputs.find(item => item.kind === 'trigger' && item.triggerId === comment.id)!
+  expect(input).toMatchObject({ readAt: null })
+  expect(store.tickets.get(b.ticket.id)!.inputs).not.toContainEqual(expect.objectContaining({ triggerId: comment.id }))
+  expect(store.tickets.open()).toHaveLength(2)
+  expect(h.candidates()).not.toContain(comment.id)
+  const events = () => store.observationsAfter(before).filter(item => 'inputId' in item.data && item.data.inputId === input.id)
+  expect(events().map(item => item.type)).toEqual(['input.added', 'input.delivered'])
+  h.step(a.sessionId)
+  await vi.waitFor(() => expect(events().map(item => item.type)).toEqual(['input.added', 'input.delivered', 'input.read']))
+  expect(events()[2]!.data).toMatchObject({ ticketId: a.ticket.id, assignmentId: latestAssignment(a.ticket)!.id })
+
+  await h.runTool(a.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Boundary test added' })
+  engine.threadClosed({ source: 'github', id: '42' }, 'merged', new Date().toISOString())
+  expect(store.tickets.get(a.ticket.id)!.ended?.outcome).toBe('merged')
+  const resumedAfter = store.observationCursor()
+  h.runtime.receive({ ...comment, id: 'later-review', text: 'Check one more case' })
+  await h.runtime.idle()
+  const resumed = store.tickets.get(a.ticket.id)!
+  expect(resumed.ended).toBeUndefined()
+  expect(resumed.assignments).toHaveLength(a.ticket.assignments.length + 1)
+  expect(store.observationsAfter(resumedAfter)).toContainEqual(expect.objectContaining({
+    type: 'ticket.resumed', data: { ticketId: a.ticket.id, triggerId: 'later-review' },
+  }))
+})
 const linkLookedUp = (messageId: string) =>
   vi.mocked(Commands.prototype.lark).mock.calls.some(([args]) => args.includes('+messages-mget') && args.includes(messageId))
 /** Hold the first resolution of a Session until `gate` resolves; `held()` says whether it began. */

@@ -75,6 +75,10 @@ export class Store implements Repositories {
             CREATE TABLE IF NOT EXISTS ticket (id TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS decision (id TEXT PRIMARY KEY, thread TEXT NOT NULL, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS observation (
+              seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, at TEXT NOT NULL, value TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS observation_delivery ON observation(json_extract(value, '$.inputId'), seq)
+              WHERE type = 'input.delivered';
             CREATE TABLE IF NOT EXISTS trigger_thread (thread TEXT NOT NULL, id TEXT NOT NULL, at TEXT NOT NULL, human INTEGER NOT NULL,
               PRIMARY KEY (thread, id));
             CREATE TABLE IF NOT EXISTS effect (kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, seq INTEGER NOT NULL,
@@ -159,6 +163,28 @@ export class Store implements Repositories {
   afterCommit(action: () => void): void {
     if (this.depth) this.committed[this.depth - 1]!.push(action)
     else action()
+  }
+  private readonly observationListeners = new Set<() => void>()
+  /** Adds a fact in its enclosing transaction and wakes stream readers after commit. */
+  observe(type: string, at: string, data: object): void {
+    this.db.prepare('INSERT INTO observation (type, at, value) VALUES (?, ?, ?)').run(type, at, JSON.stringify(data))
+    this.afterCommit(() => {
+      for (const listener of this.observationListeners) listener()
+    })
+  }
+  /** Returns the durable position of the latest observation. */
+  observationCursor(): number {
+    return Number(this.db.prepare('SELECT coalesce(max(seq), 0) AS seq FROM observation').get()?.seq)
+  }
+  /** Reads one bounded batch in commit order. */
+  observationsAfter(after: number) {
+    return this.db.prepare('SELECT seq, type, at, value FROM observation WHERE seq > ? ORDER BY seq LIMIT 100').all(after)
+      .map(row => ({ seq: Number(row.seq), type: String(row.type), at: String(row.at), data: JSON.parse(String(row.value)) as object }))
+  }
+  /** Registers an in-process notification. Consumers resume from the database cursor. */
+  watchObservations(listener: () => void): () => void {
+    this.observationListeners.add(listener)
+    return () => { this.observationListeners.delete(listener) }
   }
   /** Reads a typed KV record by its key in `KV`. */
   get<V>(name: Key<V>): V | undefined {

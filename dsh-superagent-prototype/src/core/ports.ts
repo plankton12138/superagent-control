@@ -85,6 +85,7 @@ export interface Outbox {
 /** What the Engine reports after a change, by event type. */
 export interface DomainEvents {
   'trigger.received': { triggerId: string; threads: string[] }
+  'trigger.filtered': { triggerId: string; reason: string }
   'eval.started': { evalId: string; threadKey: string; triggerIds: string[]; strength: Strength }
   'decision.recorded': { decisionId: string; kind: DecisionKind; threadKey: string }
   'ticket.created': { ticketId: string; decisionId: string; strength: Strength }
@@ -92,6 +93,11 @@ export interface DomainEvents {
   'ticket.ended': { ticketId: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
   'assignment.started': { ticketId: string; assignmentId: string }
   'assignment.ended': { ticketId: string; assignmentId: string; reason: string }
+  'input.added': { ticketId: string; inputId: string; triggerId: string; context: boolean }
+  'input.delivered': { ticketId: string; assignmentId: string; inputId: string }
+  'input.read': { ticketId: string; assignmentId?: string; inputId: string }
+  'assignment.reported': { ticketId: string; assignmentId: string; state: string }
+  'thread.bound': { ticketId: string; threadKey: string; own: boolean }
   'thread.subscribed': { threadKey: string; ticketId: string }
   /** A person dropped every ticket's Subscription, or a ticket's Executor its own, for `reason`. */
   'thread.unsubscribed': { threadKey: string; ticketId: string; by: 'person' | 'executor'; reason?: string }

@@ -134,25 +134,33 @@ export class Runtime extends Service implements SourceHost {
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
-        repliedTo: trigger => repliedTo({ store, sources }, trigger) })
+        repliedTo: trigger => repliedTo({ store, sources }, trigger),
+        observeTurn: (ticketId, assignmentId, status) => store.observe('worker.turn', now(), { ticketId, assignmentId, status }) })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused(),
-        observe: observe ? (message, status) => store.afterCommit(() => observe({ kind: 'outbox', at: now(), message, status })) : undefined })
+        observe: (message, status) => {
+          const at = now()
+          store.observe('reply.status', at, { id: message.id, ticketId: message.ticketId,
+            source: message.channel.source, threadKey: message.channel.thread, kind: message.kind, status })
+          if (observe) store.afterCommit(() => observe({ kind: 'outbox', at, message, status }))
+        } })
       const { assessor, executor } = this
       const policy = () => {
         const current = settingsPolicy(store.settings(), sources)
-        if (!observe) return current
         return { ...current, gate(trigger: Trigger, thread: Parameters<typeof current.gate>[1], tickets: Ticket[]) {
           const result = current.gate(trigger, thread, tickets)
           const at = new Date().toISOString()
-          store.afterCommit(() => observe({ kind: 'gate', at, triggerId: trigger.id, thread: thread.key, policyVersion: current.version, result }))
+          store.observe('gate.checked', at, { triggerId: trigger.id, threadKey: thread.key, policyVersion: current.version,
+            admissible: result.admissible, reason: result.admissible ? undefined : result.reason })
+          if (observe) store.afterCommit(() => observe({ kind: 'gate', at, triggerId: trigger.id, thread: thread.key, policyVersion: current.version, result }))
           return result
         } }
       }
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+          store.observe(event.type, event.at, event.data)
           if (observe) store.afterCommit(() => observe({ kind: 'domain', at: event.at, event }))
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))

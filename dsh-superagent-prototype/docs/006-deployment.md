@@ -113,6 +113,10 @@ Copy [examples/profile.cordis.patch.yml](../examples/profile.cordis.patch.yml) t
 
 After the first start, edit machine limits in **Settings → Deployment** or the DeepSeek Harness Plugin Manager. Changes apply without restart. `stateDir` cannot be changed there. Invalid values or unknown configuration keys prevent startup; the log identifies the key.
 
+### Virtual IM
+
+For a local test with a real GitHub repository, add `virtualIm: true` beside `stateDir` in the dedicated profile, and leave Feishu and QQ disabled. In Policy, add `local-operator` to the **Virtual IM** allowed list; the browser uses this fixed local identity. Open `http://127.0.0.1:<port>/virtual-im`: mention `@SuperAgent` in the project group or write to it directly. The chat uses the profile's normal Policy, model and ticket execution. Replies appear in the same conversation.
+
 ## Start and stop
 
 ```sh

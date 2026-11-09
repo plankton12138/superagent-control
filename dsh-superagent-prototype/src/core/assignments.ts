@@ -35,11 +35,12 @@ export class Assignments extends EnginePart {
     const ticket = this.require(ticketId)
     const assignment = ticket.assignments.find(item => item.id === assignmentId)
     if (!assignment || assignment.state === 'ended') return
+    const firstStart = assignment.startedAt === undefined
     assignment.state = 'running'; assignment.startedAt ??= this.now()
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
     if (liveTicket(ticket) && ticket.undelivered.length) this.options.executor.deliver(ticket, assignment)
-    this.emit('assignment.started', { ticketId, assignmentId })
+    if (firstStart) this.emit('assignment.started', { ticketId, assignmentId })
   }
   /**
    * Marks `inputIds` delivered on the ticket's running assignment and clears any prior `delivery` failure; ignored if no
@@ -48,6 +49,7 @@ export class Assignments extends EnginePart {
   delivered(ticketId: string, assignmentId: string, inputIds: string[]): void {
     const ticket = this.running(ticketId, assignmentId)
     if (!ticket) return
+    const delivered = ticket.undelivered.filter(id => inputIds.includes(id))
     ticket.undelivered = ticket.undelivered.filter(id => !inputIds.includes(id)); ticket.updatedAt = this.now()
     runningAssignment(ticket)!.deliveredAt = ticket.updatedAt
     for (const input of ticket.inputs) {
@@ -55,12 +57,17 @@ export class Assignments extends EnginePart {
     }
     delete ticket.delivery
     this.repo.tickets.save(ticket)
+    for (const inputId of delivered) this.emit('input.delivered', { ticketId, assignmentId, inputId })
   }
   /** Records when the worker's Session of an open ticket took `inputIds` into a step, from which its model reads them. */
   read(ticketId: string, inputIds: string[]): void {
     const ticket = this.require(ticketId)
     if (!liveTicket(ticket)) return
-    for (const input of ticket.inputs) if (input.kind === 'trigger' && inputIds.includes(input.id)) input.readAt ||= this.now()
+    for (const input of ticket.inputs) {
+      if (input.kind !== 'trigger' || !inputIds.includes(input.id) || input.readAt) continue
+      input.readAt = this.now()
+      this.emit('input.read', { ticketId, assignmentId: input.deliveredTo, inputId: input.id })
+    }
     this.repo.tickets.save(ticket)
   }
   turnEnded(ticketId: string, assignmentId: string): void {
@@ -120,6 +127,7 @@ export class Assignments extends EnginePart {
     // A replaced or cleared attention question withdraws any pending unsent reply for the previous question from the outbox.
     if (previous && previous.id !== attention?.id) this.replies.withdrawAttention(previous.id)
     assignment.report = { state: report.state, summary: report.summary, at }
+    this.emit('assignment.reported', { ticketId, assignmentId: assignment.id, state: report.state })
     ticket.updatedAt = at
     if (report.answers && !ticket.answers?.includes(report.answers)) ticket.answers = [...ticket.answers ?? [], report.answers]
     if (report.answers) this.takeUp(ticketId, report.answers)

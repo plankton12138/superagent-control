@@ -108,7 +108,9 @@ Engine 把批处理、授权、扇出、恢复与待人工决定生命周期规�
 
 `trigger.received`、`eval.started`、`decision.recorded`、`ticket.created`、`ticket.resumed`、`ticket.ended`、`assignment.started`、`assignment.ended`、`thread.subscribed`、`thread.unsubscribed`、`trigger.requeued` 或 `policy.changed`。
 
-Runtime 把 `ticket.ended`、`trigger.requeued` 与 `thread.unsubscribed` 转换为通知。交付到工单的人的 `trigger.received` 会成为跟进转发。`pullEndNotices` 在工单以 merged 或 closed 结束时，使用稳定 id 发送一条聊天通知。其他事件目前没有消费者。
+Runtime 把 `ticket.ended`、`trigger.requeued` 与 `thread.unsubscribed` 转换为通知。交付到工单的人的 `trigger.received` 会成为跟进转发。`pullEndNotices` 在工单以 merged 或 closed 结束时，使用稳定 id 发送一条聊天通知。Runtime 还为观测页记录领域事实，包括输入创建、送达和读取、PR 绑定和 Worker 报告。
+
+本机管理 API 提供 `GET /orchestrator/api/observatory` 读取状态及游标，提供 `GET /orchestrator/api/observations` 读取 SSE 事件。事件流从上次收到的事件 ID 或指定游标继续。领域事件与状态变更共同提交，提交后可从事件流读取。
 
 ### Model
 

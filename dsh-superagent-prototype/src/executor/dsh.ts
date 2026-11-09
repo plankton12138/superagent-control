@@ -71,6 +71,7 @@ export interface ExecutorHost {
   readonly lifetime: AbortSignal
   /** Session manager for worker sessions and for relaying worker reports to the main Session. */
   readonly sessions: Pick<Sessions, 'ensure' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
+  observeTurn?(ticketId: string, assignmentId: string, status: 'running' | 'idle'): void
   closing(): boolean
   /** Whether processing is paused, which holds launches and input deliveries. */
   paused(): boolean
@@ -178,6 +179,8 @@ export class WorkerSlots {
   constructor(private readonly running: () => string[], private readonly max: () => number) {}
   /** Number of slots currently in use across running workers and starting reservations. */
   used(): number { return new Set([...this.running(), ...this.starting.keys()]).size }
+  /** Whether a launch or wake is preparing to use a slot for this Ticket. */
+  reserved(ticketId: string): boolean { return this.starting.has(ticketId) }
   /** How many launches may run concurrently: the slots not held by a running worker or a wake reservation. */
   launches(): number {
     const wakes = [...this.starting].flatMap(([ticketId, by]) => by !== 'launch' ? [ticketId] : [])
@@ -402,6 +405,15 @@ export class DshExecutor implements Executor {
   }
   /** Number of open tickets whose worker holds a worker slot: its turn runs, or its shell jobs or subagents still run after its turn ended. */
   activeCount(): number { return this.host.store.tickets.open().filter(ticket => this.running(ticket)).length }
+  /** Reads the live Session and slot state independently of the persisted Assignment state. */
+  workerStates() {
+    return this.host.store.tickets.open().map(ticket => ({
+      ticketId: ticket.id,
+      status: this.host.context.agents.get(workerSessionId(ticket.id) as SessionId)?.status,
+      holdsSlot: this.running(ticket),
+      reserved: this.slots.reserved(ticket.id),
+    }))
+  }
   /** Whether a ticket's worker holds a worker slot: its turn runs, or its shell jobs or subagents do after its turn ended. */
   private running(ticket: Ticket): boolean {
     if (!runningAssignment(ticket)) return false
@@ -477,6 +489,11 @@ export class DshExecutor implements Executor {
   install(): void {
     const ctx = this.host.context
     this.disposers.push(ctx.on('agent/status', ({ agent, status }) => {
+      if (!this.host.closing() && (status === 'running' || status === 'idle')) {
+        const ticket = this.ticketOf(agent)
+        const assignment = ticket && runningAssignment(ticket)
+        if (ticket && assignment && liveTicket(ticket)) this.host.observeTurn?.(ticket.id, assignment.id, status)
+      }
       // A turn that starts ends the look at its worker's background work; the turn's own idle looks afresh.
       if (status === 'running') { this.settling.get(ticketOfSession(agent.id) ?? '')?.abort(); return }
       // The turn a stop of the worker's subagents woke and cancelled is no turn of the worker's.

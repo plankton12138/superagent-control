@@ -106,7 +106,9 @@ After a change, the Engine emits an event from `DomainEvents` in `src/core/ports
 
 `trigger.received`, `eval.started`, `decision.recorded`, `ticket.created`, `ticket.resumed`, `ticket.ended`, `assignment.started`, `assignment.ended`, `thread.subscribed`, `thread.unsubscribed`, `trigger.requeued`, or `policy.changed`.
 
-Runtime turns `ticket.ended`, `trigger.requeued` and `thread.unsubscribed` into notices. A human `trigger.received` delivered to Tickets becomes a follow-up relay. `pullEndNotices` sends one chat notice, using a stable id, when a Ticket ends merged or closed. Other events currently have no consumer.
+Runtime turns `ticket.ended`, `trigger.requeued` and `thread.unsubscribed` into notices. A human `trigger.received` delivered to Tickets becomes a follow-up relay. `pullEndNotices` sends one chat notice, using a stable id, when a Ticket ends merged or closed. Runtime also records domain facts for the observatory, including Input creation, delivery and reading, PR binding, and Worker reports.
+
+The loopback management API exposes `GET /orchestrator/api/observatory` for the state and cursor, and `GET /orchestrator/api/observations` for server-sent events. The stream resumes after the last event ID or the supplied cursor. Domain observations commit with their state changes, and the stream reads them after commit.
 
 ### Model
 
@@ -379,6 +381,9 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/qq-gateway.ts` | The QQ gateway WebSocket: Identify, Resume, heartbeat, Dispatch events and reconnect |
 | `src/sources/qq-trigger.ts` | QQ group and single-chat message events as Triggers, with deterministic IDs for duplicate pushes |
 | `src/sources/qq-channel.ts` | The QQ Channel: passive replies with stable `msg_seq`, `sent` or `gone` |
+| `src/sources/virtual-im.ts` | Optional loopback IM Source, mapping local conversations to Triggers and delivering replies back to them |
+| `src/sources/virtual-im-http.ts` | Same-origin virtual IM page and message endpoints shared by the DSH profile and local preview |
+| `src/sources/virtual-im-page.ts` | The single-page virtual IM client |
 | `src/client/index.tsx` | The client plugin entry: the sidebar entry, the main panel and the page in DeepSeek Harness's Plugin Manager |
 | `src/client/app.tsx` | The panel: header, search, glossary, tabs and the page of the current route |
 | `src/client/provider.tsx` | What every page reads from its host: copy, calls, navigation, notices, the state poll, and `restart`, which reads the state quickly while dsh-superagent restarts |

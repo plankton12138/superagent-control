@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-settings'
 import { Runtime } from './app/runtime.ts'
 import { Config, machineOf, type DeploymentConfig } from './deployment.ts'
+import { mountVirtualIm } from './sources/virtual-im.ts'
 
 export const name = 'dsh-superagent'
 export const inject = ['agents', 'sessionController', 'sessionPersistence', 'workspaceRegistry', 'permissionPresets', 'tools', 'systemPrompt', 'skills', 'webServer', 'llm', 'subprocess']
@@ -19,7 +20,9 @@ export async function apply(ctx: Context, config: DeploymentConfig): Promise<voi
     ctx.fiber.restart().then(() => { ctx.get('settings')?.describe() }).catch((error: unknown) => { ctx.logger.error('dsh-superagent restart failed: %s', String(error)) })
   }
   const runtime = new Runtime(ctx, machine, restart)
-  ctx.effect(() => async () => { await runtime.stop() })
+  let disposeVirtualIm: (() => void) | undefined
+  ctx.effect(() => async () => { try { await runtime.stop() } finally { disposeVirtualIm?.() } })
+  if (config.virtualIm) disposeVirtualIm = mountVirtualIm(ctx, runtime)
   await runtime.ready
   ctx.logger.info(runtime.configured() ? 'dsh-superagent ready; the Superagent sidebar entry opens the management panel' : `dsh-superagent is waiting for setup: ${runtime.setupProblem?.detail ?? ''}`)
 }

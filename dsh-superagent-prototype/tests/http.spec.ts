@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
@@ -6,9 +7,49 @@ import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
+import { Store } from '../src/app/store.ts'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
 type Headers = Record<string, string | undefined>
+
+it('streams only committed observations after the last event ID', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'observatory-http-'))
+  const store = new Store(join(directory, 'store.sqlite'))
+  let handler: Handler = async () => {}
+  const ctx = { webServer: { host: '127.0.0.1', port: 3082,
+    register: (route: { handler: Handler }) => { handler = route.handler; return () => {} } } }
+  const dispose = registerHttp(ctx as never, { store, ready: Promise.resolve() } as HttpHost)
+  const received: string[] = []
+  const res = Object.assign(new EventEmitter(), {
+    writeHead: (status: number) => expect(status).toBe(200), flushHeaders: () => {},
+    write: (chunk: string) => { received.push(chunk); return true },
+  })
+  try {
+    store.observe('old', '1', {})
+    store.observe('replay', '2', {})
+    await handler({ method: 'GET', url: '/orchestrator/api/observations?after=0',
+      headers: { host: '127.0.0.1:3082', 'x-orchestrator-request': '1', 'last-event-id': '1' } }, res)
+    expect(received).toHaveLength(1)
+    expect(received[0]).toContain('id: 2')
+    expect(() => store.atomic(() => { store.observe('rollback', '3', {}); throw new Error('rollback') })).toThrow('rollback')
+    expect(received).toHaveLength(1)
+    store.atomic(() => {
+      store.observe('live', '4', {})
+      expect(received).toHaveLength(1)
+    })
+    expect(received).toHaveLength(2)
+    expect(received[1]).toContain('"type":"live"')
+    expect(received[1]).toContain('id: 3')
+  } finally {
+    res.emit('close')
+    dispose()
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 /** Mount management HTTP routes on a fake web server and return a request helper that includes default panel headers. */
 function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.0.1') {
   let handler: Handler = async () => {}

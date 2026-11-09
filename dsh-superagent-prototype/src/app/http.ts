@@ -37,7 +37,7 @@ export interface HttpHost {
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery'>
   readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels'>
   readonly engine: EngineForPeople
-  readonly executor: Pick<DshExecutor, 'activeCount'>
+  readonly executor: Pick<DshExecutor, 'activeCount' | 'workerStates'>
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -230,6 +230,7 @@ function match(table: Routes, method: string, segments: string[]) {
 export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
   if (ctx.webServer.host !== '127.0.0.1') throw new Error('Orchestrator management requires a loopback Web server')
   const table = routes(runtime)
+  const streams = new Set<ServerResponse>()
   const disposers = [
     ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
@@ -237,11 +238,53 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
       if (!sameOrigin(req, ctx.webServer.port)) { json(res, 403, { error: 'Same-origin management request required' }); return }
       try {
         await runtime.ready
+        if (req.method === 'GET' && url.pathname === '/orchestrator/api/observatory') {
+          const snapshot = { cursor: runtime.store.observationCursor(), state: stateView(runtime), workers: runtime.executor.workerStates() }
+          json(res, 200, snapshot)
+          return
+        }
+        if (req.method === 'GET' && url.pathname === '/orchestrator/api/observations') {
+          const after = z.coerce.number().int().nonnegative().parse(req.headers['last-event-id'] ?? url.searchParams.get('after') ?? 0)
+          if (after > runtime.store.observationCursor()) throw new RouteError(400, 'Observation cursor is ahead of the database')
+          streamObservations(runtime.store, res, after, streams)
+          return
+        }
         const route = match(table, req.method ?? 'GET', url.pathname.slice('/orchestrator/api/'.length).split('/'))
         if (!route) throw new RouteError(404, 'Unknown operation')
         const query = Object.fromEntries(url.searchParams)
         json(res, 200, await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) }))
       } catch (error) { json(res, ...failure(error)) }
     } })]
-  return () => { for (const dispose of disposers) dispose() }
+  return () => {
+    for (const stream of streams) stream.destroy()
+    for (const dispose of disposers) dispose()
+  }
+}
+
+/** Streams committed observations, resuming from the last event ID or the supplied snapshot cursor. */
+function streamObservations(store: Store, res: ServerResponse, after: number, streams: Set<ServerResponse>): void {
+  res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform' })
+  res.flushHeaders()
+  streams.add(res)
+  let cursor = after
+  let blocked = false
+  const flush = () => {
+    if (blocked || res.destroyed) return
+    for (;;) {
+      const batch = store.observationsAfter(cursor)
+      for (const event of batch) {
+        cursor = event.seq
+        if (!res.write(`id: ${cursor}\ndata: ${JSON.stringify(event)}\n\n`)) { blocked = true; return }
+      }
+      if (batch.length < 100) return
+    }
+  }
+  const unwatch = store.watchObservations(flush)
+  const heartbeat = setInterval(() => {
+    if (!blocked && !res.destroyed) blocked = !res.write(': heartbeat\n\n')
+  }, 15_000)
+  heartbeat.unref()
+  res.on('drain', () => { blocked = false; flush() })
+  res.once('close', () => { unwatch(); clearInterval(heartbeat); streams.delete(res) })
+  flush()
 }

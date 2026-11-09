@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>运行拓扑 · SuperAgent</title>
+  <link rel="stylesheet" href="/graph.css">
+  <script defer src="/graph.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand"><span class="mark" aria-hidden="true">S</span> SuperAgent <span class="brand-slash">/</span> <span class="brand-section">运行拓扑</span></div>
+    <div class="connection" data-connection role="status"><span></span> 正在连接</div>
+  </header>
+  <main>
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">DSH SUPERAGENT</div>
+        <h1>实时运行拓扑</h1>
+        <p data-repository>当前部署 · 只读预览</p>
+      </div>
+      <div class="load">
+        <div><strong data-running>—</strong><span>Worker 占用</span></div>
+        <div><strong data-queued>—</strong><span>等待执行</span></div>
+        <div><strong data-open>—</strong><span>开放工单</span></div>
+      </div>
+    </div>
+    <div class="workspace">
+      <section class="graph" aria-label="SuperAgent 架构图">
+        <header class="panel-head">
+          <div><h2>系统架构</h2><p data-sample>等待读取 SuperAgent 状态</p></div>
+          <div class="switch" aria-label="完成的工单">
+            <button type="button" data-recent aria-pressed="false">近期完成 <span data-recent-count>0</span></button>
+          </div>
+        </header>
+        <div class="graph-scroll">
+          <div class="canvas" data-canvas>
+            <div class="columns" aria-hidden="true"><span>01 · 来源与线程</span><span>02 · 引擎与队列</span><span>03 · 工单与 Worker</span><span>04 · 交付与回执</span></div>
+            <svg class="wires" data-wires aria-label="架构连线"></svg>
+            <div class="network" data-network><p class="loading">正在读取真实工单…</p></div>
+          </div>
+        </div>
+        <footer class="legend"><span><i class="dot live"></i>执行或已发出</span><span><i class="dot queued"></i>等待</span><span><i class="dot done"></i>已结束</span><span class="legend-hint">点节点或连线查看详情</span></footer>
+      </section>
+      <aside class="details" data-details aria-label="节点详情" hidden></aside>
+    </div>
+  </main>
+</body>
+</html>

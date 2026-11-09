@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -34,6 +35,7 @@ import { overview } from '../src/app/views/overview.ts'
 import { preview, readable } from '../src/app/views/text.ts'
 import { decisionList, search, threadDetail, threadList } from '../src/app/views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from '../src/app/views/tickets.ts'
+import { mountVirtualIm } from '../src/sources/virtual-im.ts'
 
 let runtime: Runtime
 const viewsOf = (value: Runtime) => ({ store: value.store, sources: value.sources, links: value.links() })
@@ -215,6 +217,39 @@ beforeEach(async () => {
   deliveries.mockClear()
 })
 afterEach(async () => { expect(controller.prompt).not.toHaveBeenCalled(); await runtime?.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) })
+
+it('admits authorized virtual IM requests and delivers replies only in their original chat', async () => {
+  const ctx = new Context()
+  ctx.reflect.provide('webServer', { ...(services.webServer as object), protocol: 'http:' })
+  const dispose = mountVirtualIm(ctx, runtime)
+  const projectId = '02032e08-bf31-43d7-a875-e6eaf901618d'
+  const directId = '04ad654a-c5c3-4787-8823-1e019927a2c8'
+  const call = async (chat: string, input?: { id: string; text: string }, origin?: string) => {
+    let status = 0, response = ''
+    const req = Object.assign(Readable.from(input ? [JSON.stringify(input)] : []), { method: input ? 'POST' : 'GET',
+      url: `/virtual-im/api/chats/${chat}`, headers: { host: '127.0.0.1:3082', 'x-virtual-im': '1', origin } })
+    await http(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { response = data } })
+    return { status, body: JSON.parse(response) }
+  }
+  try {
+    expect((await call('agent', { id: directId, text: '请查看 README' })).status).toBe(503)
+    const settings = runtime.store.settings()
+    runtime.store.saveSettings({ ...settings, policy: { ...settings.policy, sources: {
+      ...settings.policy.sources, 'virtual-im': { allowed: [{ id: 'local-operator' }], admission: {} },
+    } } })
+    expect((await call('agent', { id: directId, text: '请查看 README' }, 'https://example.org')).status).toBe(403)
+    await call('project', { id: projectId, text: '这是一条普通群聊消息' })
+    expect(runtime.store.threads.get('virtual-im:project')).toBeUndefined()
+    const result = await call('agent', { id: directId, text: '请查看 README' })
+    expect(result.status).toBe(200)
+    const trigger = runtime.store.triggers.get(key('virtual-im', 'agent', directId))!
+    expect(trigger).toMatchObject({ addressed: 'direct', actor: { id: 'local-operator' } })
+    runtime.engine.reply({ purpose: 'answer', triggerId: trigger.id, text: '已查看 README。' })
+    await runtime.idle()
+    expect((await call('agent')).body.messages.map((message: { from: string }) => message.from)).toEqual(['operator', 'agent'])
+    expect((await call('project')).body.messages).toEqual([expect.objectContaining({ id: projectId, from: 'operator' })])
+  } finally { dispose() }
+})
 
 it('relays an explicit member mention as a candidate and creates the ticket, acknowledgement, subscription and worker on accept', async () => {
   const { trigger, ticket, sessionId } = await acceptedTicket()
