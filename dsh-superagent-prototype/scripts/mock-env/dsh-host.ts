@@ -7,12 +7,18 @@ import { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join } from 'node:path'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
-import { Runtime } from '../../src/app/runtime.ts'
+import { Runtime, type RuntimeObservation } from '../../src/app/runtime.ts'
 import { Store } from '../../src/app/store.ts'
 import { SettingsSchema } from '../../src/policy.ts'
 import type { Machine } from '../../src/deployment.ts'
 
-export interface Delivery { sessionId: string; mode: 'queue' | 'steer' | 'inject'; id: string; text: string }
+export interface Delivery { at: string; sessionId: string; mode: 'queue' | 'steer' | 'inject'; id: string; text: string }
+interface ToolInvocation { startedAt: string; sessionId: string; assignmentId?: string; name: string; input: unknown }
+export type Observation = RuntimeObservation
+  | { kind: 'inbox'; at: string; delivery: Delivery }
+  | { kind: 'session'; at: string; sessionId: string; state: 'created' | 'running' | 'idle'; preset?: string; workspace?: string }
+  | (ToolInvocation & { kind: 'tool-start'; at: string })
+  | (ToolInvocation & { kind: 'tool'; at: string; output?: unknown; error?: string })
 interface RegisteredTool { name: string; execute: (args: unknown, execution: { signal: AbortSignal }) => Promise<unknown> }
 interface FakeAgent {
   id: string
@@ -48,6 +54,7 @@ export interface MockHost {
   stateDir: string
   agents: Map<string, FakeAgent>
   deliveries: Delivery[]
+  observations: readonly Observation[]
   onDelivery(listener: (delivery: Delivery) => void): () => void
   runTool(sessionId: string, name: string, args: unknown): Promise<unknown>
   setIdle(sessionId: string): void
@@ -65,6 +72,11 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   store.close()
 
   const deliveries: Delivery[] = []
+  const observations: Observation[] = []
+  const observe = (event: Observation) => {
+    observations.push(event)
+    if (observations.length > 4000) observations.splice(0, 400)
+  }
   const listeners = new Set<(delivery: Delivery) => void>()
   const agents = new Map<string, FakeAgent>()
   const tools = new Map<string, Map<string, RegisteredTool>>()
@@ -93,7 +105,11 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
     interrupt: () => {},
   }
 
-  const create = async ({ sessionId, agentPreset }: { sessionId: string; agentPreset?: string }): Promise<void> => {
+  function statusEvent(agent: FakeAgent, status: 'running' | 'idle'): void {
+    observe({ kind: 'session', at: new Date().toISOString(), sessionId: agent.id, state: status })
+    ctx.emit('agent/status', { agent, status } as never)
+  }
+  const create = async ({ sessionId, agentPreset, workspaceId }: { sessionId: string; agentPreset?: string; workspaceId?: string }): Promise<void> => {
     if (agents.has(sessionId)) return
     const agentCtx = new Context()
     const sessionTools = new Map<string, RegisteredTool>()
@@ -136,35 +152,37 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
         queueMicrotask(() => {
           if (agents.get(sessionId)?.status === 'idle') return
           agent.status = 'idle'
-          ctx.emit('agent/status', { agent, status: 'idle' } as never)
+          statusEvent(agent, 'idle')
         })
       },
       inject: (message: UserMessage) => {
         inbox.nextStep.push(message)
-        record({ sessionId, mode: 'inject', id: message.id, text: textOf(message) })
+        record({ at: new Date().toISOString(), sessionId, mode: 'inject', id: message.id, text: textOf(message) })
       },
       followup: (message: UserMessage) => deliver(message, 'queue'),
       steer: (message: UserMessage) => deliver(message, 'steer'),
     } as FakeAgent
     const record = (entry: Delivery) => {
       deliveries.push(entry)
+      observe({ kind: 'inbox', at: entry.at, delivery: entry })
       for (const listener of listeners) listener(entry)
     }
     const deliver = (message: UserMessage, mode: 'queue' | 'steer') => {
       inbox[mode === 'queue' ? 'nextTurn' : 'nextStep'].push(message)
-      record({ sessionId, mode, id: message.id, text: textOf(message) })
+      record({ at: new Date().toISOString(), sessionId, mode, id: message.id, text: textOf(message) })
       if (agent.status !== 'idle') return
       agent.status = 'running'
-      ctx.emit('agent/status', { agent, status: 'running' } as never)
+      statusEvent(agent, 'running')
       turn += 1
       take(true)
     }
     agents.set(sessionId, agent)
+    observe({ kind: 'session', at: new Date().toISOString(), sessionId, state: 'created', preset: agentPreset, workspace: workspaceId })
   }
 
   const resolveAgent = async (id: string) => agents.has(id) ? { agent: agents.get(id) } : { error: { code: 'session/not-found' } }
   const controller = {
-    create: async (request: { sessionId: string; agentPreset?: string }) => create(request),
+    create,
     resolveAgent,
     selectModel: async () => {},
     rename: async () => {},
@@ -194,13 +212,25 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   const machine: Machine = {
     stateDir, promptMaxChars: reference(100_000), admissionContextMaxPages: reference(10), admissionContextTimeoutMs: reference(15_000),
   } as Machine
-  const runtime = new Runtime(ctx, machine, () => { /* The sandbox does not restart accounts. */ })
+  const runtime = new Runtime(ctx, machine, () => { /* The sandbox does not restart accounts. */ }, observe)
   await runtime.ready
 
   const runTool = async (sessionId: string, name: string, args: unknown): Promise<unknown> => {
     const tool = tools.get(sessionId)?.get(name)
     if (!tool) throw new Error(`Tool ${name} is not registered for ${sessionId}`)
-    return await tool.execute(args, { signal: new AbortController().signal })
+    const startedAt = new Date().toISOString()
+    const assignmentId = sessionId.startsWith('worker-')
+      ? runtime.store.tickets.get(sessionId.slice(7))?.assignments.at(-1)?.id : undefined
+    const record = { startedAt, sessionId, assignmentId, name, input: args }
+    observe({ ...record, kind: 'tool-start', at: startedAt })
+    try {
+      const output = await tool.execute(args, { signal: new AbortController().signal })
+      observe({ ...record, kind: 'tool', at: new Date().toISOString(), output })
+      return output
+    } catch (error) {
+      observe({ ...record, kind: 'tool', at: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
   }
   const setIdle = (sessionId: string) => {
     const agent = agents.get(sessionId)
@@ -210,7 +240,7 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   }
   const wantIdle = (sessionId: string) => agents.get(sessionId)?.status === 'idle'
   return {
-    runtime, ctx, stateDir, agents, deliveries,
+    runtime, ctx, stateDir, agents, deliveries, observations,
     onDelivery: listener => { listeners.add(listener); return () => listeners.delete(listener) },
     runTool, setIdle, wantIdle,
     orchestrator: (req, res) => orchestratorHandler?.(req, res),

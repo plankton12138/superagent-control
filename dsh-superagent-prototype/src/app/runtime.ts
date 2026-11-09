@@ -13,7 +13,8 @@ import type {} from '@deepseek-ai/dsh-subprocess'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
-import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+import { Engine, key, reasonText, type EngineForSettings, type OutboundMessage, type ReceiveResult, type ReplyStatus, type Ticket, type Trigger } from '../core/index.ts'
+import type { DomainEvent, GateResult } from '../core/ports.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
@@ -51,6 +52,12 @@ import { executorTools, type ExecutorToolsHost } from './tools/executor.ts'
 declare module '@deepseek-ai/cordis' { interface Context { orchestrator: SourceHost } }
 const now = (): string => new Date().toISOString()
 
+/** Optional observer of committed runtime facts, used by the local workbench. */
+export type RuntimeObservation =
+  | { kind: 'domain'; at: string; event: DomainEvent }
+  | { kind: 'gate'; at: string; triggerId: string; thread: string; policyVersion: string; result: GateResult }
+  | { kind: 'outbox'; at: string; message: OutboundMessage; status: ReplyStatus }
+
 /**
  * Composition root of dsh-superagent that connects `Store`, `Setup`, `Engine`, `SourceRegistry`, `Effects`, `Outbox`, `Passes`, `Sessions`, `Settings`, `Prompts`, `DshExecutor`, and `MasterAssessor`.
  * Exposes the `SourceHost` service on the Cordis context for source plugins and coordinates startup, setup checks, HTTP route registration, and graceful shutdown.
@@ -84,7 +91,7 @@ export class Runtime extends Service implements SourceHost {
   private readonly toolHost: MainToolsHost & ExecutorToolsHost
   /** Non-zero while a main-Session tool is executing an Engine command, suppressing self-triggered domain event notices. */
   private quiet = 0
-  constructor(ctx: Context, readonly machine: Machine, restart: () => void) {
+  constructor(ctx: Context, readonly machine: Machine, restart: () => void, observe?: (event: RuntimeObservation) => void) {
     super(ctx, 'orchestrator')
     const runtime = this
     // Lock the state directory before opening the database so another process cannot migrate or write concurrently.
@@ -131,11 +138,22 @@ export class Runtime extends Service implements SourceHost {
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
         deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
-      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
+      const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused(),
+        observe: observe ? (message, status) => store.afterCommit(() => observe({ kind: 'outbox', at: now(), message, status })) : undefined })
       const { assessor, executor } = this
-      const policy = () => settingsPolicy(store.settings(), sources)
+      const policy = () => {
+        const current = settingsPolicy(store.settings(), sources)
+        if (!observe) return current
+        return { ...current, gate(trigger: Trigger, thread: Parameters<typeof current.gate>[1], tickets: Ticket[]) {
+          const result = current.gate(trigger, thread, tickets)
+          const at = new Date().toISOString()
+          store.afterCommit(() => observe({ kind: 'gate', at, triggerId: trigger.id, thread: thread.key, policyVersion: current.version, result }))
+          return result
+        } }
+      }
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+          if (observe) store.afterCommit(() => observe({ kind: 'domain', at: event.at, event }))
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)

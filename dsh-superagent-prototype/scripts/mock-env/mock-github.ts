@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { Commands } from '../../src/infra/commands.ts'
 import { credentialHelper, workerGitConfig } from '../../src/infra/environment.ts'
 import { commentTrigger, issueTrigger, mentions, type GithubComment } from '../../src/sources/github-trigger.ts'
+import type { Pull } from '../../src/sources/github-pull.ts'
 import type { Trigger } from '../../src/core/index.ts'
 
 export interface IssueInput {
@@ -43,6 +44,8 @@ export class MockGithub {
   readonly stateDir: string
   readonly cli: string
   private readonly issues = new Map<number, StoredIssue>()
+  private readonly comments = new Map<number, Map<number, GithubComment>>()
+  private readonly pulls = new Map<number, Pull>()
   private nextNumber = 100
   private nextCommentId = 5000
 
@@ -56,7 +59,7 @@ export class MockGithub {
 
   /** Store a simulated Issue and return the domain Trigger the GitHub Source would produce for it. */
   issue(input: IssueInput): Trigger {
-    const number = input.number ?? this.nextNumber++
+    const number = input.number ?? this.allocateNumber()
     const title = input.title?.trim() || `模拟 Issue #${number}`
     const text = input.body?.trim() ?? ''
     const body = `${text}${input.mentions && !mentions(text, this.agent) ? `${text ? '\n\n' : ''}@${this.agent}` : ''}`
@@ -72,14 +75,55 @@ export class MockGithub {
     const number = input.number
     const at = input.at ?? new Date().toISOString()
     const body = `${input.body}${input.mentions && !mentions(input.body, this.agent) ? `${input.body ? '\n\n' : ''}@${this.agent}` : ''}`
+    const pr = this.pulls.get(number)
     const comment: GithubComment = { id, body, user: { login: input.author, type: 'User' },
-      html_url: `${this.issueUrl(number)}#issuecomment-${id}`, created_at: at, updated_at: input.at }
-    return commentTrigger(comment, { number, isPr: !!input.isPr, url: comment.html_url ?? undefined }, 'conversation', this.agent)
+      html_url: `${pr?.html_url ?? this.issueUrl(number)}#issuecomment-${id}`, created_at: at, updated_at: input.at }
+    const thread = this.comments.get(number) ?? new Map<number, GithubComment>()
+    thread.set(id, comment)
+    this.comments.set(number, thread)
+    return commentTrigger(comment, { number, isPr: !!pr || !!input.isPr, url: comment.html_url ?? undefined,
+      ...(pr ? { prAuthor: pr.user.login } : {}) }, 'conversation', this.agent)
   }
 
   /** Highest simulated Issue number, or 101 when none exists; comments without a number attach to it. */
   lastNumber(): number {
     return [...this.issues.keys()].sort((a, b) => a - b).at(-1) ?? 101
+  }
+
+  openPull(branch: string, title: string): Pull {
+    const number = this.allocateNumber()
+    const pull: Pull = {
+      number, title, state: 'open', html_url: `https://github.com/${this.repository}/pull/${number}`,
+      user: { login: this.agent }, created_at: new Date().toISOString(),
+      head: { ref: `agent/${branch}`, sha: `mock-head-${number}`, repo: { full_name: this.repository } },
+    }
+    this.pulls.set(number, pull)
+    return pull
+  }
+
+  pull(number: number): Pull | undefined { return this.pulls.get(number) }
+
+  conversations() {
+    return [...this.issues.values(), ...[...this.pulls.values()].map(pr => ({
+      number: pr.number, title: pr.title, body: '', author: pr.user.login, at: pr.created_at, isPr: true,
+      state: pr.merged ? 'merged' : pr.state, branch: pr.head.ref,
+    }))].sort((a, b) => b.number - a.number).map(item => ({
+      ...item, comments: [...this.comments.get(item.number)?.values() ?? []].map(comment => ({
+        id: comment.id, text: comment.body, author: comment.user.login, at: comment.created_at,
+      })),
+    }))
+  }
+
+  private allocateNumber(): number {
+    while (this.issues.has(this.nextNumber) || this.pulls.has(this.nextNumber)) this.nextNumber++
+    return this.nextNumber++
+  }
+
+  finishPull(pull: Pull, merged: boolean): Pull {
+    const at = new Date().toISOString()
+    const updated = { ...pull, state: 'closed', merged, closed_at: at, ...(merged ? { merged_at: at } : {}) }
+    this.pulls.set(pull.number, updated)
+    return updated
   }
 
   /** Answers the startup probes of `resolveDeployment` and `verifyEnvironment` through the fake subprocess. */
@@ -131,16 +175,25 @@ export class MockGithub {
     if (issue) {
       const stored = this.issues.get(Number(issue[1]))
       return stored
-        ? { number: stored.number, title: stored.title, body: stored.body, state: 'open', user: { login: stored.author, type: 'User' },
+        ? { id: stored.number, number: stored.number, title: stored.title, body: stored.body, state: 'open', user: { login: stored.author, type: 'User' },
           created_at: stored.at, html_url: this.issueUrl(stored.number) }
-        : { number: Number(issue[1]), title: `模拟 Issue #${issue[1]}`, body: '', state: 'open', user: { login: 'alice', type: 'User' },
+        : { id: Number(issue[1]), number: Number(issue[1]), title: `模拟 Issue #${issue[1]}`, body: '', state: 'open', user: { login: 'alice', type: 'User' },
           created_at: new Date().toISOString(), html_url: this.issueUrl(Number(issue[1])) }
     }
-    if (/^issues\/\d+\/comments/.test(path) || /^pulls\/\d+\/comments/.test(path) || /^pulls\/\d+\/reviews/.test(path)) return []
+    const comments = /^issues\/(\d+)\/comments(?:\?(.*))?$/.exec(path)
+    if (comments) {
+      const query = new URLSearchParams(comments[2])
+      const size = Number(query.get('per_page')) || 100
+      const page = Number(query.get('page')) || 1
+      return [...this.comments.get(Number(comments[1]))?.values() ?? []].slice((page - 1) * size, page * size)
+    }
+    if (/^pulls\/\d+\/comments/.test(path) || /^pulls\/\d+\/reviews/.test(path)) return []
     if (/^pulls\/comments\/\d+$/.test(path)) return {}
     if (/^pulls\/\d+\/checks/.test(path)) return { total_count: 0, check_runs: [] }
     const pull = /^pulls\/(\d+)$/.exec(path)
     if (pull) {
+      const stored = this.pulls.get(Number(pull[1]))
+      if (stored) return stored
       return { state: 'open', merged: false, user: { login: this.agent }, html_url: `https://github.com/${this.repository}/pull/${pull[1]}`,
         head: { ref: 'agent/mock', sha: 'mock-head', repo: { full_name: this.repository } }, created_at: new Date().toISOString() }
     }

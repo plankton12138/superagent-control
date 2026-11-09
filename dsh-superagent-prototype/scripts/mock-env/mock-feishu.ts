@@ -12,6 +12,8 @@ export interface FeishuInput {
   author: string
   body: string
   direct?: boolean
+  chatId?: string
+  replyTo?: { rootId: string; messageId: string }
   /** Mark the message as mentioning the bot; ignored for direct messages, which are always addressed. */
   mentions?: boolean
 }
@@ -45,8 +47,9 @@ export class MockFeishu {
   trigger(input: FeishuInput): Trigger {
     const author = input.author.startsWith('ou_') ? input.author : `ou_${input.author.replace(/[^A-Za-z0-9]/g, '')}`
     const messageId = `om_${Date.now().toString(36)}${++this.counter}`
-    const trigger = feishuTrigger({ message_id: messageId, chat_id: this.chatId, chat_type: input.direct ? 'p2p' : 'group',
+    const trigger = feishuTrigger({ message_id: messageId, chat_id: input.chatId ?? (input.direct ? `oc_dm_${author}` : this.chatId), chat_type: input.direct ? 'p2p' : 'group',
       sender_id: author, sender_type: 'user', content: input.body, create_time: String(Date.now()),
+      root_id: input.replyTo?.rootId, parent_id: input.replyTo?.messageId,
       mentions: input.direct || !input.mentions ? [] : [{ id: this.botId, name: 'Mock Bot' }] }, this.botId, this.appId)
     if (!trigger) throw new Error('The simulated message was the bot\'s own')
     return trigger

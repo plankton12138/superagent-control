@@ -4,7 +4,7 @@ import type { Commands } from '../infra/commands.ts'
 import { checkedImText } from '../infra/text.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import { FAILURES_BEFORE_ERROR, Later, type Effects } from './effects.ts'
-import type { Store } from './store.ts'
+import type { DropReason, Store } from './store.ts'
 
 export interface OutboxHost {
   readonly store: Pick<Store, 'atomic' | 'receipts'>
@@ -12,6 +12,7 @@ export interface OutboxHost {
   readonly sources: Pick<SourceRegistry, 'instance' | 'channelAllowed' | 'send'>
   readonly commands: Commands
   paused(): boolean
+  observe?(message: OutboundMessage, status: ReplyStatus): void
 }
 
 /**
@@ -28,7 +29,11 @@ export class Outbox implements OutboxPort {
     // Validate IM reply length here; acknowledgements are already validated when decided.
     if (message.kind === 'reply' && (message.channel.source === 'feishu' || message.channel.source === 'qq')) checkedImText(message.text)
     const { store, effects } = this.host
-    store.atomic(() => { if (store.receipts.add(message)) effects.enqueue('reply', message.id, {}) })
+    store.atomic(() => {
+      if (!store.receipts.add(message)) return
+      effects.enqueue('reply', message.id, {})
+      this.host.observe?.(message, 'pending')
+    })
   }
   status(id: string): ReplyStatus | undefined { return this.host.store.receipts.get(id)?.status }
   withdraw(id: string): void {
@@ -43,10 +48,15 @@ export class Outbox implements OutboxPort {
     if (!sources.instance(receipt.channel.source)?.enabled) throw new Later('The Source is off or not installed')
     // Hold later messages for the same ticket and conversation behind an earlier pending message until it exceeds the failure threshold.
     if (store.receipts.behind(id, FAILURES_BEFORE_ERROR)) throw new Later('An earlier message of this ticket to this conversation waits')
-    if (!sources.channelAllowed(receipt.channel)) { store.receipts.settle(receipt, 'channelIgnored'); return }
+    if (!sources.channelAllowed(receipt.channel)) { this.settle(receipt, 'channelIgnored'); return }
     // A permanently unreachable target (such as a recalled message or deleted Issue) settles as `channelGone` so its receipt prevents retries.
     const result = await sources.send(receipt, commands)
     if (result === 'waiting') throw new Later('The Source is not installed')
-    store.receipts.settle(receipt, result === 'gone' ? 'channelGone' : 'sent')
+    this.settle(receipt, result === 'gone' ? 'channelGone' : 'sent')
+  }
+
+  private settle(message: OutboundMessage, outcome: 'sent' | DropReason): void {
+    this.host.store.receipts.settle(message, outcome)
+    this.host.observe?.(message, outcome === 'sent' ? 'sent' : 'dropped')
   }
 }
