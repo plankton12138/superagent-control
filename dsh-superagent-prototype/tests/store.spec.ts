@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Store, SCHEMA_VERSION } from '../src/app/store.ts'
+import { LogQuery, readLogs, workerReportLog } from '../src/app/logs.ts'
 import { MemoryRepositories, key, type Assignment, type Decision, type Repositories, type Thread, type Ticket } from '../src/core/index.ts'
 import { threadFacts } from '../src/app/views/records.ts'
 import { KV } from '../src/kv.ts'
@@ -45,6 +46,30 @@ const ticket = (id: string, state: 'open' | 'ended', assignments: Pick<Assignmen
 const thread = (id: string, source: string, fields: Partial<Thread> = {}): Thread =>
   ({ key: `${source}:${id}`, ref: { source, id }, createdAt: '', subscriptions: [], correlated: [], pending: [], meta: {}, ...fields })
 const ids = (items: { id?: string; key?: string }[]) => items.map(item => item.id ?? item.key).sort()
+it('queries historical and recorded logs without duplicates or leaked credentials', () => {
+  const store = new Store(join(directory, 'orchestrator.sqlite'))
+  const at = '2026-11-09T11:20:00.032Z'
+  const failed = ticket('github-failure', 'open', [{ state: 'ended' }, { state: 'running' }])
+  const summary = 'Error: The prepare command failed: https://name:secret@github.com/repo port 443'
+  failed.assignments[0]!.report = { at, state: 'failed', summary }
+  failed.assignments[1]!.report = { at, state: 'failed', summary: 'Failed to connect to github.com port 443' }
+  store.tickets.save(failed)
+  store.observe('log.entry', at, { ...workerReportLog('failed', summary), ticketId: failed.id, assignmentId: failed.assignments[0]!.id })
+  store.observe('log.entry', at, { component: 'github', level: 'info', code: 'github.ready', message: 'Polling resumed' })
+  const query = { q: 'GITHUB.COM', level: 'error', ticket: 'github-f', limit: 1 }
+  try {
+    const first = readLogs(store.db, LogQuery.parse(query))
+    const second = readLogs(store.db, LogQuery.parse({ ...query, ...first.next }))
+    expect(first.items).toHaveLength(1)
+    expect(second.items).toHaveLength(1)
+    expect(second.next).toBeNull()
+    expect([...first.items, ...second.items].map(item => item.assignmentId).sort()).toEqual(failed.assignments.map(item => item.id))
+    expect(JSON.stringify([...first.items, ...second.items])).not.toContain('name:secret')
+    expect(readLogs(store.db, LogQuery.parse({ q: 'name:secret' })).items).toEqual([])
+    expect(readLogs(store.db, LogQuery.parse({ component: 'github' })).items.map(item => item.code)).toEqual(['github.ready'])
+  } finally { store.close() }
+})
+
 it('reads the working sets alone, in SQLite as in memory, and follows each save', () => {
   const store = new Store(join(directory, 'orchestrator.sqlite'))
   for (const repo of [store, new MemoryRepositories()] as Repositories[]) {

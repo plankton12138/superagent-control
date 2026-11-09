@@ -15,6 +15,7 @@ export interface HealthEntry {
 export class HealthBoard {
   private readonly entries: Record<string, Health> = {}
   private readonly claimed = new Set<string>()
+  constructor(private readonly onChange?: (name: string, health: Health, previous: Health | undefined) => void) {}
   claim(name: string, initial?: Health): HealthEntry {
     if (this.claimed.has(name)) throw new Error(`The health entry ${name} is reported by another part`)
     this.claimed.add(name)
@@ -22,7 +23,12 @@ export class HealthBoard {
     let held = true
     return {
       get: () => this.entries[name],
-      set: health => { if (held) this.entries[name] = health },
+      set: health => {
+        if (!held) return
+        const previous = this.entries[name]
+        this.entries[name] = health
+        this.onChange?.(name, health, previous)
+      },
       release: () => {
         if (!held) return
         held = false

@@ -39,6 +39,10 @@ it('records a PR follow-up on the subscribed worker only, with separate delivery
   expect(events()[2]!.data).toMatchObject({ ticketId: a.ticket.id, assignmentId: latestAssignment(a.ticket)!.id })
 
   await h.runTool(a.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Boundary test added' })
+  const logs = await h.api('GET', `logs?ticket=${a.ticket.id}&q=Boundary+test`)
+  expect(logs).toMatchObject({ status: 200, body: { items: [
+    expect.objectContaining({ code: 'worker.report.ready', ticketId: a.ticket.id, message: 'Boundary test added' }),
+  ], next: null } })
   engine.threadClosed({ source: 'github', id: '42' }, 'merged', new Date().toISOString())
   expect(store.tickets.get(a.ticket.id)!.ended?.outcome).toBe('merged')
   const resumedAfter = store.observationCursor()

@@ -224,7 +224,8 @@ function inspectTicket(kind, ticket, number) {
   const delay = assignment?.startedAt && assignment.createdAt
     ? `${((Date.parse(assignment.startedAt) - Date.parse(assignment.createdAt)) / 1000).toFixed(1)} 秒` : '等待启动'
   const ticketFacts = facts([['工单', briefId(ticket.id)], ['执行记录', briefId(assignment?.id)],
-    ['入队到启动', delay], ['当前状态', phase(ticket).text]])
+    ['入队到启动', delay], ['当前状态', phase(ticket).text]]) +
+    `<p><a href="/logs?ticket=${encodeURIComponent(ticket.id)}">查看此工单的运行日志</a></p>`
   if (kind === 'dispatch') {
     return ['派发与启动', ticket.title, ticketFacts + timeline(dispatchEvents(ticket))]
   }

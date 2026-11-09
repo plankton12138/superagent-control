@@ -9,6 +9,7 @@ import { SettingsSchema, type Settings, type SettingsOrigin, type SettingsSave }
 import { OLDEST_SCHEMA, SCHEMA_VERSION, migrateTo11, tooOld } from './migration.ts'
 import { Versions } from './versions.ts'
 import { storeReads } from './store-read.ts'
+import { registerLogRedaction } from './logs.ts'
 
 /** A Trigger's position on its thread timeline, ordered by timestamp and then `id` as tie-breaker. */
 export interface TimelinePlace { at: string; id: string }
@@ -60,6 +61,7 @@ export class Store implements Repositories {
     this.db = new DatabaseSync(path)
     this.read = storeReads(this.db)
     try {
+      registerLogRedaction(this.db)
       chmodSync(path, 0o600)
       this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
       const version = this.get(KV.store.schema)
@@ -79,6 +81,7 @@ export class Store implements Repositories {
               seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, at TEXT NOT NULL, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS observation_delivery ON observation(json_extract(value, '$.inputId'), seq)
               WHERE type = 'input.delivered';
+            CREATE INDEX IF NOT EXISTS observation_logs_at ON observation(at, seq) WHERE type = 'log.entry';
             CREATE TABLE IF NOT EXISTS trigger_thread (thread TEXT NOT NULL, id TEXT NOT NULL, at TEXT NOT NULL, human INTEGER NOT NULL,
               PRIMARY KEY (thread, id));
             CREATE TABLE IF NOT EXISTS effect (kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, seq INTEGER NOT NULL,

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>运行日志 · SuperAgent</title>
+  <link rel="stylesheet" href="/graph.css">
+  <script defer src="/logs.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand"><span class="mark" aria-hidden="true">S</span> SuperAgent <span class="brand-slash">/</span> <span class="brand-section">运行日志</span></div>
+    <a class="close" href="/">返回拓扑</a>
+  </header>
+  <main class="log-page">
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">DSH SUPERAGENT</div>
+        <h1>运行日志</h1>
+        <p>按工单、来源或关键词查找失败、重试和运行状态变化。</p>
+      </div>
+    </div>
+    <section class="graph" aria-label="日志查询">
+      <form class="log-filters">
+        <label>关键词<input name="q" maxlength="200" placeholder="例如 github.com 或 443"></label>
+        <label>工单 ID<input name="ticket" maxlength="128" placeholder="支持 ID 前缀"></label>
+        <label>级别<select name="level">
+          <option value="">全部级别</option><option value="error">错误</option><option value="warn">警告</option><option value="info">信息</option>
+        </select></label>
+        <label>组件<select name="component">
+          <option value="">全部组件</option><option value="worker">Worker</option><option value="github">GitHub</option><option value="runtime">运行时</option>
+        </select></label>
+        <button class="close" type="submit">查询 / 刷新</button>
+      </form>
+      <p class="log-status" role="status" aria-live="polite" data-log-status>正在读取日志…</p>
+      <div class="log-results" data-log-results></div>
+      <div class="log-footer"><button class="close" type="button" data-log-more hidden>加载更多</button></div>
+    </section>
+  </main>
+</body>
+</html>

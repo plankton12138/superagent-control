@@ -31,6 +31,7 @@ import { TextCache } from './cache.ts'
 import { Effects } from './effects.ts'
 import { Prompts } from './prompts.ts'
 import { registerHttp, type HttpHost } from './http.ts'
+import { logText, workerReportLog } from './logs.ts'
 import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
@@ -78,7 +79,15 @@ export class Runtime extends Service implements SourceHost {
   readonly engine: Engine
   readonly passes: Passes
   readonly ready: Promise<void>
-  private readonly board = new HealthBoard()
+  private readonly board = new HealthBoard((name, health, previous) => {
+    if (!this.store || this.closing()) return
+    if (health.state === previous?.state && (health.state !== 'error' || health.detail === previous.detail)) return
+    const component = name === 'github' || name === 'worker' ? name : 'runtime'
+    this.store.observe('log.entry', health.at ?? now(), {
+      component, level: health.state === 'error' ? 'error' : 'info',
+      code: `${name}.${health.state}`, message: logText(health.detail || name),
+    })
+  })
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
   readonly masterId: string
   private readonly sourceLinks = new TextCache(200_000)
@@ -161,6 +170,16 @@ export class Runtime extends Service implements SourceHost {
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
         outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
           store.observe(event.type, event.at, event.data)
+          if (event.type === 'assignment.reported') {
+            const { ticketId, assignmentId } = event.data
+            const report = store.tickets.get(ticketId)?.assignments.find(item => item.id === assignmentId)?.report
+            if (report) store.observe('log.entry', report.at, { ...workerReportLog(report.state, report.summary), ticketId, assignmentId })
+          } else if (event.type === 'assignment.ended' && event.data.reason === 'retried') {
+            const { ticketId, assignmentId } = event.data
+            store.observe('log.entry', event.at, {
+              component: 'worker', level: 'info', code: 'worker.retried', message: '已重新派工', ticketId, assignmentId,
+            })
+          }
           if (observe) store.afterCommit(() => observe({ kind: 'domain', at: event.at, event }))
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))

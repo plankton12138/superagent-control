@@ -21,3 +21,5 @@ wsl -d Debian --exec /home/plankton/.local/share/superagent-virtual-im/node/bin/
 ```
 
 保持该窗口打开，访问[实时观测 Dashboard](http://127.0.0.1:3083/)。Dashboard 从本机 `3082` 的 SuperAgent 读取状态。点击节点或连线可以查看详情，点击「近期完成」可以查看历史工单、PR 和跟进消息。
+
+点击顶部的「运行日志」，按关键词、工单 ID、级别或组件查询。工单详情里的「查看此工单的运行日志」会自动填入工单 ID。日志来自当前配置的 `orchestrator.sqlite`，包括历史 Worker 报告和新记录的运行状态变化。

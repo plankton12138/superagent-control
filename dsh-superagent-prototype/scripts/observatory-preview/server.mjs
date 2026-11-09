@@ -9,6 +9,8 @@ const upstream = 'http://127.0.0.1:3082'
 const page = readFileSync(new URL('./index.html', import.meta.url))
 const script = readFileSync(new URL('./graph.js', import.meta.url))
 const style = readFileSync(new URL('./graph.css', import.meta.url))
+const logsPage = readFileSync(new URL('./logs.html', import.meta.url))
+const logsScript = readFileSync(new URL('./logs.js', import.meta.url))
 
 async function read(path, headers) {
   const response = await fetch(upstream + path, { headers, signal: AbortSignal.timeout(3500) })
@@ -154,6 +156,17 @@ if (import.meta.main) createServer(async (req, res) => {
     case '/': return reply(res, 200, page, 'text/html; charset=utf-8')
     case '/graph.js': return reply(res, 200, script, 'text/javascript; charset=utf-8')
     case '/graph.css': return reply(res, 200, style, 'text/css; charset=utf-8')
+    case '/logs': return reply(res, 200, logsPage, 'text/html; charset=utf-8')
+    case '/logs.js': return reply(res, 200, logsScript, 'text/javascript; charset=utf-8')
+    case '/api/logs':
+      try {
+        const response = await fetch(`${upstream}/orchestrator/api/logs${url.search}`, {
+          headers: { 'x-orchestrator-request': '1' }, signal: AbortSignal.timeout(3500),
+        })
+        if (response.status === 400) return reply(res, 400, '{"error":"日志筛选条件无效"}')
+        if (response.ok) return reply(res, 200, JSON.stringify(await response.json()))
+      } catch { /* The local runtime is unreachable. */ }
+      return reply(res, 503, '{"error":"无法读取日志，请检查 SuperAgent 是否运行且已更新"}')
     case '/api/topology':
       try { return reply(res, 200, JSON.stringify(await snapshot())) }
       catch { return reply(res, 503, '{"error":"无法读取 SuperAgent 状态，请检查 3082 上的部署"}') }
